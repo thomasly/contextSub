@@ -1,8 +1,7 @@
 import os
-import rdkit
 import torch
 import pickle
-from itertools import chain, product
+from itertools import chain
 
 import pandas as pd
 import numpy as np

@@ -561,6 +561,9 @@ class MaskAtom:
         )
         return ret
 
+    def get_substructs(mol):
+        pass
+
 
 def get_substructs(
     mol,
