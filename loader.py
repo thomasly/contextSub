@@ -1,7 +1,7 @@
 import os
 import torch
 import pickle
-from itertools import repeat, chain
+from itertools import chain
 
 import pandas as pd
 import numpy as np
@@ -13,6 +13,8 @@ from rdkit.Chem.rdMolDescriptors import GetMorganFingerprintAsBitVect
 from torch.utils import data
 from torch_geometric.data import Data
 from torch_geometric.data import InMemoryDataset
+
+from .util import get_substructs
 
 
 # allowable node and edge features
@@ -268,54 +270,32 @@ class MoleculeDataset(InMemoryDataset):
     def __init__(
         self,
         root,
-        # data = None,
-        # slices = None,
         transform=None,
         pre_transform=None,
         pre_filter=None,
         dataset="zinc250k",
-        empty=False,
     ):
         """
-        Adapted from qm9.py. Disabled the download functionality
-        :param root: directory of the dataset, containing a raw and processed
-        dir. The raw dir should contain the file containing the smiles, and the
-        processed dir can either empty or a previously processed file
-        :param dataset: name of the dataset. Currently only implemented for
-        zinc250k, chembl_with_labels, tox21, hiv, bace, bbbp, clintox, esol,
-        freesolv, lipophilicity, muv, pcba, sider, toxcast
-        :param empty: if True, then will not load any data obj. For
-        initializing empty dataset
+        The main Dataset class for the project.
+
+        Args:
+            root (str): path to the root directory of the dataset.
+            transform (callable): the on-the-fly data transformer.
+            pre_transform (callable): the one-time data transformer for
+                data preprocessing.
+            prefilter (callable): the one-time filter for data preprocessing.
+            dataset (str): name of the dataset.
         """
         self.dataset = dataset
         self.root = root
-
         super(MoleculeDataset, self).__init__(
             root, transform, pre_transform, pre_filter
         )
-        self.transform, self.pre_transform, self.pre_filter = (
-            transform,
-            pre_transform,
-            pre_filter,
-        )
-
-        if not empty:
-            self.data, self.slices = torch.load(self.processed_paths[0])
-
-    def get(self, idx):
-        data = Data()
-        for key in self.data.keys:
-            item, slices = self.data[key], self.slices[key]
-            s = list(repeat(slice(None), item.dim()))
-            s[data.cat_dim(key, item)] = slice(slices[idx], slices[idx + 1])
-            data[key] = item[s]
-        return data
+        self.data, self.slices = torch.load(self.processed_paths[0])
 
     @property
     def raw_file_names(self):
         file_name_list = os.listdir(self.raw_dir)
-        # assert len(file_name_list) == 1     # currently assume we have a
-        # # single raw file
         return file_name_list
 
     @property
@@ -323,408 +303,106 @@ class MoleculeDataset(InMemoryDataset):
         return "geometric_data_processed.pt"
 
     def download(self):
-        raise NotImplementedError(
-            "Must indicate valid location of raw data. " "No download allowed"
-        )
+        pass
+
+    def add_data_to_list(smiles, mols, labels, data_list, data_smiles_list):
+        for i in range(len(smiles)):
+            rdkit_mol = mols[i]
+            data = mol_to_graph_data_obj_simple(rdkit_mol)
+            data.id = torch.tensor([i])
+            if labels.dim() > 1:
+                data.y = torch.tensor(labels[i, :])
+            else:
+                data.y = torch.tensor(labels[i])
+            data.substucts = torch.tensor(get_substructs(rdkit_mol))
+            data_list.append(data)
+            data_smiles_list.append(smiles[i])
+
+    def load_zinc_standard_dataset(self, data_list, data_smiles_list):
+        input_path = self.raw_paths[0]
+        input_df = pd.read_csv(input_path, sep=",", compression="gzip", dtype="str")
+        smiles_list = list(input_df["smiles"])
+        zinc_id_list = list(input_df["zinc_id"])
+        for i in range(len(smiles_list)):
+            print(i)
+            s = smiles_list[i]
+            # each example contains a single species
+            rdkit_mol = AllChem.MolFromSmiles(s)
+            if rdkit_mol is None:
+                continue
+            else:
+                data = mol_to_graph_data_obj_simple(rdkit_mol)
+                # add mol id
+                id = int(zinc_id_list[i].split("ZINC")[1].lstrip("0"))
+                data.id = torch.tensor([id])
+                data.substucts = torch.tensor(get_substructs(rdkit_mol))
+                data_list.append(data)
+                data_smiles_list.append(smiles_list[i])
+
+    def load_chembl_dataset(self, data_list, data_smiles_list):
+        (
+            smiles_list,
+            rdkit_mol_objs,
+            folds,
+            labels,
+        ) = _load_chembl_with_labels_dataset(os.path.join(self.root, "raw"))
+        for i in range(len(rdkit_mol_objs)):
+            print(i)
+            rdkit_mol = rdkit_mol_objs[i]
+            if rdkit_mol is not None:
+                mw = Descriptors.MolWt(rdkit_mol)
+                if 50 <= mw <= 900:
+                    data = mol_to_graph_data_obj_simple(rdkit_mol)
+                    # manually add mol id
+                    data.id = torch.tensor([i])
+                    data.substucts = torch.tensor(get_substructs(rdkit_mol))
+                    data.y = torch.tensor(labels[i, :])
+                    # fold information
+                    if i in folds[0]:
+                        data.fold = torch.tensor([0])
+                    elif i in folds[1]:
+                        data.fold = torch.tensor([1])
+                    else:
+                        data.fold = torch.tensor([2])
+                    data_list.append(data)
+                    data_smiles_list.append(smiles_list[i])
+
+    def load_dataset(self, data_list, data_smiles_list, method):
+        smiles, mols, labels = method(self.raw_paths[0])
+        self.add_data_to_list(smiles, mols, labels, data_list, data_smiles_list)
 
     def process(self):
         data_smiles_list = []
         data_list = []
-
         if self.dataset == "zinc_standard_agent":
-            input_path = self.raw_paths[0]
-            input_df = pd.read_csv(input_path, sep=",", compression="gzip", dtype="str")
-            smiles_list = list(input_df["smiles"])
-            zinc_id_list = list(input_df["zinc_id"])
-            for i in range(len(smiles_list)):
-                print(i)
-                s = smiles_list[i]
-                # each example contains a single species
-                rdkit_mol = AllChem.MolFromSmiles(s)
-                if rdkit_mol is None:
-                    continue
-                else:
-                    data = mol_to_graph_data_obj_simple(rdkit_mol)
-                    # add mol id
-                    id = int(zinc_id_list[i].split("ZINC")[1].lstrip("0"))
-                    data.id = torch.tensor([id])
-                    data.substucts = torch.tensor(get_substructs(rdkit_mol))
-                    data_list.append(data)
-                    data_smiles_list.append(smiles_list[i])
+            self.load_zinc_standard_dataset(data_list, data_smiles_list)
 
         elif self.dataset == "chembl_filtered":
-            # get downstream test molecules.
-            from splitters import scaffold_split
-
-            downstream_dir = [
-                "dataset/bace",
-                "dataset/bbbp",
-                "dataset/clintox",
-                "dataset/esol",
-                "dataset/freesolv",
-                "dataset/hiv",
-                "dataset/lipophilicity",
-                "dataset/muv",
-                # 'dataset/pcba/processed/smiles.csv',
-                "dataset/sider",
-                "dataset/tox21",
-                "dataset/toxcast",
-            ]
-
-            downstream_inchi_set = set()
-            for d_path in downstream_dir:
-                print(d_path)
-                dataset_name = d_path.split("/")[1]
-                downstream_dataset = MoleculeDataset(d_path, dataset=dataset_name)
-                downstream_smiles = pd.read_csv(
-                    os.path.join(d_path, "processed", "smiles.csv"), header=None
-                )[0].tolist()
-
-                assert len(downstream_dataset) == len(downstream_smiles)
-
-                _, _, _, (train_smiles, valid_smiles, test_smiles) = scaffold_split(
-                    downstream_dataset,
-                    downstream_smiles,
-                    task_idx=None,
-                    null_value=0,
-                    frac_train=0.8,
-                    frac_valid=0.1,
-                    frac_test=0.1,
-                    return_smiles=True,
-                )
-
-                ### remove both test and validation molecules
-                remove_smiles = test_smiles + valid_smiles
-
-                downstream_inchis = []
-                for smiles in remove_smiles:
-                    species_list = smiles.split(".")
-                    for s in species_list:  # record inchi for all species, not just
-                        # largest (by default in create_standardized_mol_id if input has
-                        # multiple species)
-                        inchi = create_standardized_mol_id(s)
-                        downstream_inchis.append(inchi)
-                downstream_inchi_set.update(downstream_inchis)
-
-            (
-                smiles_list,
-                rdkit_mol_objs,
-                folds,
-                labels,
-            ) = _load_chembl_with_labels_dataset(os.path.join(self.root, "raw"))
-
-            print("processing")
-            for i in range(len(rdkit_mol_objs)):
-                print(i)
-                rdkit_mol = rdkit_mol_objs[i]
-                if rdkit_mol != None:
-                    # # convert aromatic bonds to double bonds
-                    # Chem.SanitizeMol(rdkit_mol,
-                    #                  sanitizeOps=Chem.SanitizeFlags.SANITIZE_KEKULIZE)
-                    mw = Descriptors.MolWt(rdkit_mol)
-                    if 50 <= mw <= 900:
-                        inchi = create_standardized_mol_id(smiles_list[i])
-                        if inchi != None and inchi not in downstream_inchi_set:
-                            data = mol_to_graph_data_obj_simple(rdkit_mol)
-                            # manually add mol id
-                            data.id = torch.tensor(
-                                [i]
-                            )  # id here is the index of the mol in
-                            # the dataset
-                            data.y = torch.tensor(labels[i, :])
-                            # fold information
-                            if i in folds[0]:
-                                data.fold = torch.tensor([0])
-                            elif i in folds[1]:
-                                data.fold = torch.tensor([1])
-                            else:
-                                data.fold = torch.tensor([2])
-                            data_list.append(data)
-                            data_smiles_list.append(smiles_list[i])
+            self.load_chembl_dataset(data_list, data_smiles_list)
 
         elif self.dataset == "tox21":
-            smiles_list, rdkit_mol_objs, labels = _load_tox21_dataset(self.raw_paths[0])
-            for i in range(len(smiles_list)):
-                print(i)
-                rdkit_mol = rdkit_mol_objs[i]
-                ## convert aromatic bonds to double bonds
-                # Chem.SanitizeMol(rdkit_mol,
-                # sanitizeOps=Chem.SanitizeFlags.SANITIZE_KEKULIZE)
-                data = mol_to_graph_data_obj_simple(rdkit_mol)
-                # manually add mol id
-                data.id = torch.tensor([i])  # id here is the index of the mol in
-                # the dataset
-                data.y = torch.tensor(labels[i, :])
-                data_list.append(data)
-                data_smiles_list.append(smiles_list[i])
+            self.load_dataset(data_list, data_smiles_list, method=_load_tox21_dataset)
 
         elif self.dataset == "hiv":
-            smiles_list, rdkit_mol_objs, labels = _load_hiv_dataset(self.raw_paths[0])
-            for i in range(len(smiles_list)):
-                print(i)
-                rdkit_mol = rdkit_mol_objs[i]
-                # # convert aromatic bonds to double bonds
-                # Chem.SanitizeMol(rdkit_mol,
-                #                  sanitizeOps=Chem.SanitizeFlags.SANITIZE_KEKULIZE)
-                data = mol_to_graph_data_obj_simple(rdkit_mol)
-                # manually add mol id
-                data.id = torch.tensor([i])  # id here is the index of the mol in
-                # the dataset
-                data.y = torch.tensor([labels[i]])
-                data_list.append(data)
-                data_smiles_list.append(smiles_list[i])
+            self.load_dataset(data_list, data_smiles_list, method=_load_hiv_dataset)
 
         elif self.dataset == "bace":
-            smiles_list, rdkit_mol_objs, folds, labels = _load_bace_dataset(
-                self.raw_paths[0]
-            )
-            for i in range(len(smiles_list)):
-                print(i)
-                rdkit_mol = rdkit_mol_objs[i]
-                # # convert aromatic bonds to double bonds
-                # Chem.SanitizeMol(rdkit_mol,
-                #                  sanitizeOps=Chem.SanitizeFlags.SANITIZE_KEKULIZE)
-                data = mol_to_graph_data_obj_simple(rdkit_mol)
-                # manually add mol id
-                data.id = torch.tensor([i])  # id here is the index of the mol in
-                # the dataset
-                data.y = torch.tensor([labels[i]])
-                data.fold = torch.tensor([folds[i]])
-                data_list.append(data)
-                data_smiles_list.append(smiles_list[i])
+            self.load_dataset(data_list, data_smiles_list, method=_load_bace_dataset)
 
         elif self.dataset == "bbbp":
-            smiles_list, rdkit_mol_objs, labels = _load_bbbp_dataset(self.raw_paths[0])
-            for i in range(len(smiles_list)):
-                print(i)
-                rdkit_mol = rdkit_mol_objs[i]
-                if rdkit_mol != None:
-                    # # convert aromatic bonds to double bonds
-                    # Chem.SanitizeMol(rdkit_mol,
-                    #                  sanitizeOps=Chem.SanitizeFlags.SANITIZE_KEKULIZE)
-                    data = mol_to_graph_data_obj_simple(rdkit_mol)
-                    # manually add mol id
-                    data.id = torch.tensor([i])  # id here is the index of the mol in
-                    # the dataset
-                    data.y = torch.tensor([labels[i]])
-                    data_list.append(data)
-                    data_smiles_list.append(smiles_list[i])
+            self.load_dataset(data_list, data_smiles_list, method=_load_bbbp_dataset)
 
         elif self.dataset == "clintox":
-            smiles_list, rdkit_mol_objs, labels = _load_clintox_dataset(
-                self.raw_paths[0]
-            )
-            for i in range(len(smiles_list)):
-                print(i)
-                rdkit_mol = rdkit_mol_objs[i]
-                if rdkit_mol != None:
-                    # # convert aromatic bonds to double bonds
-                    # Chem.SanitizeMol(rdkit_mol,
-                    #                  sanitizeOps=Chem.SanitizeFlags.SANITIZE_KEKULIZE)
-                    data = mol_to_graph_data_obj_simple(rdkit_mol)
-                    # manually add mol id
-                    data.id = torch.tensor([i])  # id here is the index of the mol in
-                    # the dataset
-                    data.y = torch.tensor(labels[i, :])
-                    data_list.append(data)
-                    data_smiles_list.append(smiles_list[i])
-
-        elif self.dataset == "esol":
-            smiles_list, rdkit_mol_objs, labels = _load_esol_dataset(self.raw_paths[0])
-            for i in range(len(smiles_list)):
-                print(i)
-                rdkit_mol = rdkit_mol_objs[i]
-                # # convert aromatic bonds to double bonds
-                # Chem.SanitizeMol(rdkit_mol,
-                #                  sanitizeOps=Chem.SanitizeFlags.SANITIZE_KEKULIZE)
-                data = mol_to_graph_data_obj_simple(rdkit_mol)
-                # manually add mol id
-                data.id = torch.tensor([i])  # id here is the index of the mol in
-                # the dataset
-                data.y = torch.tensor([labels[i]])
-                data_list.append(data)
-                data_smiles_list.append(smiles_list[i])
-
-        elif self.dataset == "freesolv":
-            smiles_list, rdkit_mol_objs, labels = _load_freesolv_dataset(
-                self.raw_paths[0]
-            )
-            for i in range(len(smiles_list)):
-                print(i)
-                rdkit_mol = rdkit_mol_objs[i]
-                # # convert aromatic bonds to double bonds
-                # Chem.SanitizeMol(rdkit_mol,
-                #                  sanitizeOps=Chem.SanitizeFlags.SANITIZE_KEKULIZE)
-                data = mol_to_graph_data_obj_simple(rdkit_mol)
-                # manually add mol id
-                data.id = torch.tensor([i])  # id here is the index of the mol in
-                # the dataset
-                data.y = torch.tensor([labels[i]])
-                data_list.append(data)
-                data_smiles_list.append(smiles_list[i])
-
-        elif self.dataset == "lipophilicity":
-            smiles_list, rdkit_mol_objs, labels = _load_lipophilicity_dataset(
-                self.raw_paths[0]
-            )
-            for i in range(len(smiles_list)):
-                print(i)
-                rdkit_mol = rdkit_mol_objs[i]
-                # # convert aromatic bonds to double bonds
-                # Chem.SanitizeMol(rdkit_mol,
-                #                  sanitizeOps=Chem.SanitizeFlags.SANITIZE_KEKULIZE)
-                data = mol_to_graph_data_obj_simple(rdkit_mol)
-                # manually add mol id
-                data.id = torch.tensor([i])  # id here is the index of the mol in
-                # the dataset
-                data.y = torch.tensor([labels[i]])
-                data_list.append(data)
-                data_smiles_list.append(smiles_list[i])
+            self.load_dataset(data_list, data_smiles_list, method=_load_clintox_dataset)
 
         elif self.dataset == "muv":
-            smiles_list, rdkit_mol_objs, labels = _load_muv_dataset(self.raw_paths[0])
-            for i in range(len(smiles_list)):
-                print(i)
-                rdkit_mol = rdkit_mol_objs[i]
-                # # convert aromatic bonds to double bonds
-                # Chem.SanitizeMol(rdkit_mol,
-                #                  sanitizeOps=Chem.SanitizeFlags.SANITIZE_KEKULIZE)
-                data = mol_to_graph_data_obj_simple(rdkit_mol)
-                # manually add mol id
-                data.id = torch.tensor([i])  # id here is the index of the mol in
-                # the dataset
-                data.y = torch.tensor(labels[i, :])
-                data_list.append(data)
-                data_smiles_list.append(smiles_list[i])
-
-        elif self.dataset == "pcba":
-            smiles_list, rdkit_mol_objs, labels = _load_pcba_dataset(self.raw_paths[0])
-            for i in range(len(smiles_list)):
-                print(i)
-                rdkit_mol = rdkit_mol_objs[i]
-                # # convert aromatic bonds to double bonds
-                # Chem.SanitizeMol(rdkit_mol,
-                #                  sanitizeOps=Chem.SanitizeFlags.SANITIZE_KEKULIZE)
-                data = mol_to_graph_data_obj_simple(rdkit_mol)
-                # manually add mol id
-                data.id = torch.tensor([i])  # id here is the index of the mol in
-                # the dataset
-                data.y = torch.tensor(labels[i, :])
-                data_list.append(data)
-                data_smiles_list.append(smiles_list[i])
-
-        elif self.dataset == "pcba_pretrain":
-            smiles_list, rdkit_mol_objs, labels = _load_pcba_dataset(self.raw_paths[0])
-            downstream_inchi = set(
-                pd.read_csv(
-                    os.path.join(self.root, "downstream_mol_inchi_may_24_2019"),
-                    sep=",",
-                    header=None,
-                )[0]
-            )
-            for i in range(len(smiles_list)):
-                print(i)
-                if "." not in smiles_list[i]:  # remove examples with
-                    # multiples species
-                    rdkit_mol = rdkit_mol_objs[i]
-                    mw = Descriptors.MolWt(rdkit_mol)
-                    if 50 <= mw <= 900:
-                        inchi = create_standardized_mol_id(smiles_list[i])
-                        if inchi != None and inchi not in downstream_inchi:
-                            # # convert aromatic bonds to double bonds
-                            # Chem.SanitizeMol(rdkit_mol,
-                            #                  sanitizeOps=Chem.SanitizeFlags.SANITIZE_KEKULIZE)
-                            data = mol_to_graph_data_obj_simple(rdkit_mol)
-                            # manually add mol id
-                            data.id = torch.tensor(
-                                [i]
-                            )  # id here is the index of the mol in
-                            # the dataset
-                            data.y = torch.tensor(labels[i, :])
-                            data_list.append(data)
-                            data_smiles_list.append(smiles_list[i])
-
-        # elif self.dataset == ''
+            self.load_dataset(data_list, data_smiles_list, method=_load_muv_dataset)
 
         elif self.dataset == "sider":
-            smiles_list, rdkit_mol_objs, labels = _load_sider_dataset(self.raw_paths[0])
-            for i in range(len(smiles_list)):
-                print(i)
-                rdkit_mol = rdkit_mol_objs[i]
-                # # convert aromatic bonds to double bonds
-                # Chem.SanitizeMol(rdkit_mol,
-                #                  sanitizeOps=Chem.SanitizeFlags.SANITIZE_KEKULIZE)
-                data = mol_to_graph_data_obj_simple(rdkit_mol)
-                # manually add mol id
-                data.id = torch.tensor([i])  # id here is the index of the mol in
-                # the dataset
-                data.y = torch.tensor(labels[i, :])
-                data_list.append(data)
-                data_smiles_list.append(smiles_list[i])
+            self.load_dataset(data_list, data_smiles_list, method=_load_sider_dataset)
 
         elif self.dataset == "toxcast":
-            smiles_list, rdkit_mol_objs, labels = _load_toxcast_dataset(
-                self.raw_paths[0]
-            )
-            for i in range(len(smiles_list)):
-                print(i)
-                rdkit_mol = rdkit_mol_objs[i]
-                if rdkit_mol != None:
-                    # # convert aromatic bonds to double bonds
-                    # Chem.SanitizeMol(rdkit_mol,
-                    #                  sanitizeOps=Chem.SanitizeFlags.SANITIZE_KEKULIZE)
-                    data = mol_to_graph_data_obj_simple(rdkit_mol)
-                    # manually add mol id
-                    data.id = torch.tensor([i])  # id here is the index of the mol in
-                    # the dataset
-                    data.y = torch.tensor(labels[i, :])
-                    data_list.append(data)
-                    data_smiles_list.append(smiles_list[i])
-
-        elif self.dataset == "ptc_mr":
-            input_path = self.raw_paths[0]
-            input_df = pd.read_csv(
-                input_path, sep=",", header=None, names=["id", "label", "smiles"]
-            )
-            smiles_list = input_df["smiles"]
-            labels = input_df["label"].values
-            for i in range(len(smiles_list)):
-                print(i)
-                s = smiles_list[i]
-                rdkit_mol = AllChem.MolFromSmiles(s)
-                if rdkit_mol != None:  # ignore invalid mol objects
-                    # # convert aromatic bonds to double bonds
-                    # Chem.SanitizeMol(rdkit_mol,
-                    #                  sanitizeOps=Chem.SanitizeFlags.SANITIZE_KEKULIZE)
-                    data = mol_to_graph_data_obj_simple(rdkit_mol)
-                    # manually add mol id
-                    data.id = torch.tensor([i])
-                    data.y = torch.tensor([labels[i]])
-                    data_list.append(data)
-                    data_smiles_list.append(smiles_list[i])
-
-        elif self.dataset == "mutag":
-            smiles_path = os.path.join(self.root, "raw", "mutag_188_data.can")
-            # smiles_path = 'dataset/mutag/raw/mutag_188_data.can'
-            labels_path = os.path.join(self.root, "raw", "mutag_188_target.txt")
-            # labels_path = 'dataset/mutag/raw/mutag_188_target.txt'
-            smiles_list = pd.read_csv(smiles_path, sep=" ", header=None)[0]
-            labels = pd.read_csv(labels_path, header=None)[0].values
-            for i in range(len(smiles_list)):
-                print(i)
-                s = smiles_list[i]
-                rdkit_mol = AllChem.MolFromSmiles(s)
-                if rdkit_mol != None:  # ignore invalid mol objects
-                    # # convert aromatic bonds to double bonds
-                    # Chem.SanitizeMol(rdkit_mol,
-                    #                  sanitizeOps=Chem.SanitizeFlags.SANITIZE_KEKULIZE)
-                    data = mol_to_graph_data_obj_simple(rdkit_mol)
-                    # manually add mol id
-                    data.id = torch.tensor([i])
-                    data.y = torch.tensor([labels[i]])
-                    data_list.append(data)
-                    data_smiles_list.append(smiles_list[i])
-
+            self.load_dataset(data_list, data_smiles_list, method=_load_toxcast_dataset)
         else:
             raise ValueError("Invalid dataset name")
 
@@ -789,7 +467,6 @@ def merge_dataset_objs(dataset_1, dataset_2):
 
 def create_circular_fingerprint(mol, radius, size, chirality):
     """
-
     :param mol:
     :param radius:
     :param size:
@@ -838,7 +515,7 @@ class MoleculeFingerprintDataset(data.Dataset):
             for i in range(len(rdkit_mol_objs)):
                 print(i)
                 rdkit_mol = rdkit_mol_objs[i]
-                if rdkit_mol != None:
+                if rdkit_mol is not None:
                     # # convert aromatic bonds to double bonds
                     fp_arr = create_circular_fingerprint(
                         rdkit_mol, self.radius, self.size, self.chirality
@@ -865,7 +542,7 @@ class MoleculeFingerprintDataset(data.Dataset):
             for i in range(len(smiles_list)):
                 print(i)
                 rdkit_mol = rdkit_mol_objs[i]
-                ## convert aromatic bonds to double bonds
+                # convert aromatic bonds to double bonds
                 fp_arr = create_circular_fingerprint(
                     rdkit_mol, self.radius, self.size, self.chirality
                 )
@@ -930,7 +607,7 @@ class MoleculeFingerprintDataset(data.Dataset):
         return len(self.data_list)
 
     def __getitem__(self, index):
-        ## if iterable class is passed, return dataset objection
+        # if iterable class is passed, return dataset objection
         if hasattr(index, "__iter__"):
             dataset = MoleculeFingerprintDataset(
                 self.root,
@@ -947,7 +624,6 @@ class MoleculeFingerprintDataset(data.Dataset):
 
 def _load_tox21_dataset(input_path):
     """
-
     :param input_path:
     :return: list of smiles, list of rdkit mol obj, np.array containing the
     labels
@@ -999,7 +675,6 @@ def _load_hiv_dataset(input_path):
 
 def _load_bace_dataset(input_path):
     """
-
     :param input_path:
     :return: list of smiles, list of rdkit mol obj, np.array
     containing indices for each of the 3 folds, np.array containing the
@@ -1034,10 +709,10 @@ def _load_bbbp_dataset(input_path):
     rdkit_mol_objs_list = [AllChem.MolFromSmiles(s) for s in smiles_list]
 
     preprocessed_rdkit_mol_objs_list = [
-        m if m != None else None for m in rdkit_mol_objs_list
+        m if m is not None else None for m in rdkit_mol_objs_list
     ]
     preprocessed_smiles_list = [
-        AllChem.MolToSmiles(m) if m != None else None
+        AllChem.MolToSmiles(m) if m is not None else None
         for m in preprocessed_rdkit_mol_objs_list
     ]
     labels = input_df["p_np"]
@@ -1052,7 +727,6 @@ def _load_bbbp_dataset(input_path):
 
 def _load_clintox_dataset(input_path):
     """
-
     :param input_path:
     :return: list of smiles, list of rdkit mol obj, np.array containing the
     labels
@@ -1062,10 +736,10 @@ def _load_clintox_dataset(input_path):
     rdkit_mol_objs_list = [AllChem.MolFromSmiles(s) for s in smiles_list]
 
     preprocessed_rdkit_mol_objs_list = [
-        m if m != None else None for m in rdkit_mol_objs_list
+        m if m is not None else None for m in rdkit_mol_objs_list
     ]
     preprocessed_smiles_list = [
-        AllChem.MolToSmiles(m) if m != None else None
+        AllChem.MolToSmiles(m) if m is not None else None
         for m in preprocessed_rdkit_mol_objs_list
     ]
     tasks = ["FDA_APPROVED", "CT_TOX"]
@@ -1079,66 +753,8 @@ def _load_clintox_dataset(input_path):
     return preprocessed_smiles_list, preprocessed_rdkit_mol_objs_list, labels.values
 
 
-# input_path = 'dataset/clintox/raw/clintox.csv'
-# smiles_list, rdkit_mol_objs_list, labels = _load_clintox_dataset(input_path)
-
-
-def _load_esol_dataset(input_path):
-    """
-
-    :param input_path:
-    :return: list of smiles, list of rdkit mol obj, np.array containing the
-    labels (regression task)
-    """
-    # NB: some examples have multiple species
-    input_df = pd.read_csv(input_path, sep=",")
-    smiles_list = input_df["smiles"]
-    rdkit_mol_objs_list = [AllChem.MolFromSmiles(s) for s in smiles_list]
-    labels = input_df["measured log solubility in mols per litre"]
-    assert len(smiles_list) == len(rdkit_mol_objs_list)
-    assert len(smiles_list) == len(labels)
-    return smiles_list, rdkit_mol_objs_list, labels.values
-
-
-# input_path = 'dataset/esol/raw/delaney-processed.csv'
-# smiles_list, rdkit_mol_objs_list, labels = _load_esol_dataset(input_path)
-
-
-def _load_freesolv_dataset(input_path):
-    """
-
-    :param input_path:
-    :return: list of smiles, list of rdkit mol obj, np.array containing the
-    labels (regression task)
-    """
-    input_df = pd.read_csv(input_path, sep=",")
-    smiles_list = input_df["smiles"]
-    rdkit_mol_objs_list = [AllChem.MolFromSmiles(s) for s in smiles_list]
-    labels = input_df["expt"]
-    assert len(smiles_list) == len(rdkit_mol_objs_list)
-    assert len(smiles_list) == len(labels)
-    return smiles_list, rdkit_mol_objs_list, labels.values
-
-
-def _load_lipophilicity_dataset(input_path):
-    """
-
-    :param input_path:
-    :return: list of smiles, list of rdkit mol obj, np.array containing the
-    labels (regression task)
-    """
-    input_df = pd.read_csv(input_path, sep=",")
-    smiles_list = input_df["smiles"]
-    rdkit_mol_objs_list = [AllChem.MolFromSmiles(s) for s in smiles_list]
-    labels = input_df["exp"]
-    assert len(smiles_list) == len(rdkit_mol_objs_list)
-    assert len(smiles_list) == len(labels)
-    return smiles_list, rdkit_mol_objs_list, labels.values
-
-
 def _load_muv_dataset(input_path):
     """
-
     :param input_path:
     :return: list of smiles, list of rdkit mol obj, np.array containing the
     labels
@@ -1177,7 +793,6 @@ def _load_muv_dataset(input_path):
 
 def _load_sider_dataset(input_path):
     """
-
     :param input_path:
     :return: list of smiles, list of rdkit mol obj, np.array containing the
     labels
@@ -1224,7 +839,6 @@ def _load_sider_dataset(input_path):
 
 def _load_toxcast_dataset(input_path):
     """
-
     :param input_path:
     :return: list of smiles, list of rdkit mol obj, np.array containing the
     labels
@@ -1236,10 +850,10 @@ def _load_toxcast_dataset(input_path):
     # Some smiles could not be successfully converted
     # to rdkit mol object so them to None
     preprocessed_rdkit_mol_objs_list = [
-        m if m != None else None for m in rdkit_mol_objs_list
+        m if m is not None else None for m in rdkit_mol_objs_list
     ]
     preprocessed_smiles_list = [
-        AllChem.MolToSmiles(m) if m != None else None
+        AllChem.MolToSmiles(m) if m is not None else None
         for m in preprocessed_rdkit_mol_objs_list
     ]
     tasks = list(input_df.columns)[1:]
@@ -1256,7 +870,8 @@ def _load_toxcast_dataset(input_path):
 
 def _load_chembl_with_labels_dataset(root_path):
     """
-    Data from 'Large-scale comparison of machine learning methods for drug target prediction on ChEMBL'
+    Data from 'Large-scale comparison of machine learning methods for drug target
+    prediction on ChEMBL'
     :param root_path: path to the folder containing the reduced chembl dataset
     :return: list of smiles, preprocessed rdkit mol obj list, list of np.array
     containing indices for each of the 3 folds, np.array containing the labels
@@ -1265,9 +880,11 @@ def _load_chembl_with_labels_dataset(root_path):
     # first need to download the files and unzip:
     # wget http://bioinf.jku.at/research/lsc/chembl20/dataPythonReduced.zip
     # unzip and rename to chembl_with_labels
-    # wget http://bioinf.jku.at/research/lsc/chembl20/dataPythonReduced/chembl20Smiles.pckl
+    # wget http://bioinf.jku.at/research/lsc/chembl20/dataPythonReduced
+    # /chembl20Smiles.pckl
     # into the dataPythonReduced directory
-    # wget http://bioinf.jku.at/research/lsc/chembl20/dataPythonReduced/chembl20LSTM.pckl
+    # wget http://bioinf.jku.at/research/lsc/chembl20/dataPythonReduced
+    # /chembl20LSTM.pckl
 
     # 1. load folds and labels
     f = open(os.path.join(root_path, "folds0.pckl"), "rb")
@@ -1289,20 +906,6 @@ def _load_chembl_with_labels_dataset(root_path):
     folds = [np.intersect1d(fold, sampleAnnInd.index.values).tolist() for fold in folds]
     targetMatTransposed = targetMat[sampleAnnInd[list(chain(*folds))]].T.tocsr()
     targetMatTransposed.sort_indices()
-    # # num positive examples in each of the 1310 targets
-    trainPosOverall = np.array(
-        [
-            np.sum(targetMatTransposed[x].data > 0.5)
-            for x in range(targetMatTransposed.shape[0])
-        ]
-    )
-    # # num negative examples in each of the 1310 targets
-    trainNegOverall = np.array(
-        [
-            np.sum(targetMatTransposed[x].data < -0.5)
-            for x in range(targetMatTransposed.shape[0])
-        ]
-    )
     # dense array containing the labels for the 456331 molecules and 1310 targets
     denseOutputData = targetMat.A  # possible values are {-1, 0, 1}
 
@@ -1319,7 +922,7 @@ def _load_chembl_with_labels_dataset(root_path):
     for i in range(len(rdkitArr)):
         print(i)
         m = rdkitArr[i]
-        if m == None:
+        if m is None:
             preprocessed_rdkitArr.append(None)
         else:
             mol_species_list = split_rdkit_mol_obj(m)
@@ -1335,7 +938,7 @@ def _load_chembl_with_labels_dataset(root_path):
     assert len(preprocessed_rdkitArr) == denseOutputData.shape[0]
 
     smiles_list = [
-        AllChem.MolToSmiles(m) if m != None else None for m in preprocessed_rdkitArr
+        AllChem.MolToSmiles(m) if m is not None else None for m in preprocessed_rdkitArr
     ]  # bc some empty mol in the
     # rdkitArr zzz...
 
@@ -1344,17 +947,11 @@ def _load_chembl_with_labels_dataset(root_path):
     return smiles_list, preprocessed_rdkitArr, folds, denseOutputData
 
 
-# root_path = 'dataset/chembl_with_labels'
-
-
 def check_smiles_validity(smiles):
-    try:
-        m = Chem.MolFromSmiles(smiles)
-        if m:
-            return True
-        else:
-            return False
-    except:
+    m = Chem.MolFromSmiles(smiles)
+    if m:
+        return True
+    else:
         return False
 
 
@@ -1388,15 +985,12 @@ def get_largest_mol(mol_list):
 
 
 def create_all_datasets():
-    #### create dataset
+    # create dataset
     downstream_dir = [
         "bace",
         "bbbp",
         "clintox",
-        "esol",
-        "freesolv",
         "hiv",
-        "lipophilicity",
         "muv",
         "sider",
         "tox21",
@@ -1406,7 +1000,6 @@ def create_all_datasets():
     for dataset_name in downstream_dir:
         print(dataset_name)
         root = "dataset/" + dataset_name
-        os.makedirs(root + "/processed", exist_ok=True)
         dataset = MoleculeDataset(root, dataset=dataset_name)
         print(dataset)
 
@@ -1420,6 +1013,4 @@ def create_all_datasets():
 
 # test MoleculeDataset object
 if __name__ == "__main__":
-
     create_all_datasets()
-
