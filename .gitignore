@@ -1,6 +1,7 @@
 # processed datasets and large datasets
 *.pt
 dataset/chembl/*
+dataset/*/processed
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
