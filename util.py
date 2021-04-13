@@ -1,8 +1,11 @@
+import os.path as osp
 import random
 
 import torch
 import networkx as nx
+from rdkit import Chem
 from rdkit.Chem import AllChem
+import pandas as pd
 
 from .loader import MoleculeDataset
 from .loader import graph_data_obj_to_nx_simple, nx_to_graph_data_obj_simple
@@ -273,6 +276,32 @@ class MaskAtom:
             self.mask_edge,
         )
         return ret
+
+
+def get_substructs(
+    mol,
+    pattern_path=osp.join(
+        "contextSub", "resources", "pubchemFPKeys_to_SMARTSpattern.csv"
+    ),
+):
+    """ Get substructures from a mol.
+
+    Args:
+        mol (RDKit Mol): the Molecule object from which to find the substructures.
+        pattern_path (str): path to the patterns file. Default is "contextSub/resources/
+            pubchemFPKeys_to_SMARTSpattern.csv"
+
+    Returns:
+        substructs (list): list of lists of atom indices belonging to each substrucure.
+    """
+    patterns_df = pd.read_csv(pattern_path)
+    patterns = [Chem.MolFromSmarts(sm) for sm in patterns_df.SMARTS]
+    substructs = list()
+    for pat in patterns:
+        matches = mol.GetSubstructMatches(pat)
+        if len(matches) > 0:
+            substructs.append(matches)
+    return substructs
 
 
 if __name__ == "__main__":

@@ -377,7 +377,7 @@ class MoleculeDataset(InMemoryDataset):
         if self.dataset == "zinc_standard_agent":
             self.load_zinc_standard_dataset(data_list, data_smiles_list)
 
-        elif self.dataset == "chembl_filtered":
+        elif self.dataset == "chembl":
             self.load_chembl_dataset(data_list, data_smiles_list)
 
         elif self.dataset == "tox21":
@@ -1003,7 +1003,7 @@ def create_all_datasets():
         dataset = MoleculeDataset(root, dataset=dataset_name)
         print(dataset)
 
-    dataset = MoleculeDataset(root="dataset/chembl_filtered", dataset="chembl_filtered")
+    dataset = MoleculeDataset(root="dataset/chembl", dataset="chembl")
     print(dataset)
     dataset = MoleculeDataset(
         root="dataset/zinc_standard_agent", dataset="zinc_standard_agent"
