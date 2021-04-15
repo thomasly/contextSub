@@ -80,7 +80,7 @@ class MoleculeDataset(InMemoryDataset):
         smiles_list = list(input_df["smiles"])
         zinc_id_list = list(input_df["zinc_id"])
         for i in range(len(smiles_list)):
-            print(i)
+            print(i, end="\r")
             s = smiles_list[i]
             # each example contains a single species
             rdkit_mol = AllChem.MolFromSmiles(s)
@@ -91,7 +91,7 @@ class MoleculeDataset(InMemoryDataset):
                 # add mol id
                 id = int(zinc_id_list[i].split("ZINC")[1].lstrip("0"))
                 data.id = torch.tensor([id])
-                data.substucts = torch.tensor(get_substructs(rdkit_mol))
+                data.substructs = get_substructs(rdkit_mol)
                 data_list.append(data)
                 data_smiles_list.append(smiles_list[i])
 
@@ -103,7 +103,7 @@ class MoleculeDataset(InMemoryDataset):
             labels,
         ) = _load_chembl_with_labels_dataset(os.path.join(self.root, "raw"))
         for i in range(len(rdkit_mol_objs)):
-            print(i)
+            print(i, end="\r")
             rdkit_mol = rdkit_mol_objs[i]
             if rdkit_mol is not None:
                 mw = Descriptors.MolWt(rdkit_mol)
@@ -111,7 +111,7 @@ class MoleculeDataset(InMemoryDataset):
                     data = mol_to_graph_data_obj_simple(rdkit_mol)
                     # manually add mol id
                     data.id = torch.tensor([i])
-                    data.substucts = torch.tensor(get_substructs(rdkit_mol))
+                    data.substructs = get_substructs(rdkit_mol)
                     data.y = torch.tensor(labels[i, :])
                     # fold information
                     if i in folds[0]:
@@ -590,7 +590,7 @@ def _load_sider_dataset(input_path):
     labels = labels.replace(0, -1)
     assert len(smiles_list) == len(rdkit_mol_objs_list)
     assert len(smiles_list) == len(labels)
-    return smiles_list, rdkit_mol_objs_list, labels.value
+    return smiles_list, rdkit_mol_objs_list, labels.values
 
 
 def _load_toxcast_dataset(input_path):
@@ -722,8 +722,11 @@ def create_all_datasets():
         dataset = MoleculeDataset(root, dataset=dataset_name)
         print(dataset)
 
+    print("chembl")
     dataset = MoleculeDataset(root="contextSub/dataset/chembl", dataset="chembl")
     print(dataset)
+
+    print("zinc")
     dataset = MoleculeDataset(
         root="contextSub/dataset/zinc_standard_agent", dataset="zinc_standard_agent"
     )

@@ -1,3 +1,6 @@
+# output files
+trained_models/
+
 # processed datasets and large datasets
 *.pt
 dataset/chembl/*
