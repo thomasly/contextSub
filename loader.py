@@ -112,6 +112,9 @@ class MoleculeDataset(InMemoryDataset):
                     # manually add mol id
                     data.id = torch.tensor([i])
                     data.substructs = get_substructs(rdkit_mol)
+                    # No matches patterns
+                    if len(data.substructs) == 0:
+                        continue
                     data.y = torch.tensor(labels[i, :])
                     # fold information
                     if i in folds[0]:
@@ -676,7 +679,7 @@ def _load_chembl_with_labels_dataset(root_path):
     preprocessed_rdkitArr = []
     print("preprocessing")
     for i in range(len(rdkitArr)):
-        print(i)
+        print(i, end="\r")
         m = rdkitArr[i]
         if m is None:
             preprocessed_rdkitArr.append(None)
