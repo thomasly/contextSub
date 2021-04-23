@@ -1,4 +1,5 @@
 import os.path as osp
+import json
 
 import torch
 import networkx as nx
@@ -7,6 +8,10 @@ from rdkit.Chem import AllChem
 import pandas as pd
 import numpy as np
 from torch_geometric.data import Data
+from torch_geometric.data import Batch
+import matplotlib.pyplot as plt
+
+from .model import GNN
 
 
 allowable_features = {
@@ -337,3 +342,85 @@ def get_substructs(
         if len(matches) > 0:
             substructs.append(matches)
     return substructs
+
+
+def _load_candidates(pattern, chemicals):
+    candidates = json.load(open(chemicals))
+    data_list = []
+    y = list()
+    label = 0
+    for key, sms in candidates.items():
+        y.extend([label] * len(sms))
+        label += 1
+        for sm in sms:
+            mol = Chem.MolFromSmiles(sm)
+            data = mol_to_graph_data_obj_simple(mol)
+            data.atom = str(key)
+            data.substructs = torch.tensor(
+                mol.GetSubstructMatch(pattern), dtype=torch.int
+            )
+            data_list.append(data)
+    return data_list, y
+
+
+def _get_slices(batch):
+    slices = list()
+    n = 0
+    while n < batch.batch.size(0):
+        start = n
+        curr_value = batch.batch[n].item()
+        while n < batch.batch.size(0) and batch.batch[n].item() == curr_value:
+            n += 1
+        slices.append(slice(start, n))
+    return slices
+
+
+def evaluate_pretraining(pattern, chemicals, model_path):
+    """ Evaluate the pretraining by analyzing the embeddings of the same substructure
+    within different contexts.
+
+    Args:
+        pattern (RDKit Mol): the pattern to decide the centeral substructure.
+        chemicals (str): path to the json file with chemicals.
+        model_path (str): path to the pretrained model.
+    """
+    data_list, y = _load_candidates(pattern, chemicals)
+    batch = Batch.from_data_list(data_list)
+    slices = _get_slices(batch)
+    model = GNN(num_layer=5, emb_dim=300, JK="last", drop_ratio=0.5, gnn_type="gin")
+    model.load_state_dict(torch.load(model_path))
+    model.eval()
+    embeddings = model(batch)
+    molecule_embs = [embeddings[sl] for sl in slices]
+    pattern_embs = list()
+    for data, emb in zip(data_list, molecule_embs):
+        pattern_embs.append(
+            torch.mean(emb[data.substructs.to(torch.long)], 0).detach().numpy()
+        )
+    return pattern_embs, y
+
+
+def plot_embedding(X, y, title=None, mode="text"):
+    cmap = ["red", "green", "blue", "orange", "magenta", "gray"]
+    x_min, x_max = np.min(X, 0), np.max(X, 0)
+    X = (X - x_min) / (x_max - x_min)
+
+    plt.figure()
+    _ = plt.subplot(111)
+    if mode == "text":
+        for i in range(X.shape[0]):
+            plt.text(
+                X[i, 0],
+                X[i, 1],
+                f"{y[i]}.{i}",
+                color=cmap[y[i]],
+                fontdict={"weight": "bold", "size": 9},
+            )
+    elif mode == "dot":
+        for i in range(X.shape[0]):
+            plt.scatter(X[i, 0], X[i, 1], color=cmap[y[i]])
+    else:
+        raise ValueError(f"Wrong mode: {mode}")
+    plt.xticks([]), plt.yticks([])
+    if title is not None:
+        plt.title(title)
