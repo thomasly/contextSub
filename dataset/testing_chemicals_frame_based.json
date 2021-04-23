@@ -1,0 +1,41 @@
+{
+    "0": [
+        "c1ccccc1"
+    ],
+    "1": [
+        "Cc1ccccc1",
+        "Nc1ccccc1",
+        "Oc1ccccc1",
+        "Fc1ccccc1",
+        "Clc1ccccc1",
+        "Brc1ccccc1",
+        "Ic1ccccc1"
+    ],
+    "2": [
+        "Cc1ccc(C)cc1",
+        "Nc1ccc(N)cc1",
+        "Oc1ccc(O)cc1",
+        "Fc1ccc(F)cc1",
+        "Clc1ccc(Cl)cc1",
+        "Brc1ccc(Br)cc1",
+        "Ic1ccc(I)cc1"
+    ],
+    "3": [
+        "Cc1cc(C)cc(C)c1",
+        "Nc1cc(N)cc(N)c1",
+        "Oc1cc(O)cc(O)c1",
+        "Fc1cc(F)cc(F)c1",
+        "Clc1cc(Cl)cc(Cl)c1",
+        "Brc1cc(Br)cc(Br)c1",
+        "Ic1cc(I)cc(I)c1"
+    ],
+    "4": [
+        "CCCc1ccccc1",
+        "NCCc1ccccc1",
+        "OCCc1ccccc1",
+        "FCCc1ccccc1",
+        "ClCCc1ccccc1",
+        "BrCCc1ccccc1",
+        "ICCc1ccccc1"
+    ]
+}
