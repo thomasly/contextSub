@@ -1,7 +1,6 @@
 import os.path as osp
 import json
 
-
 import torch
 import networkx as nx
 from rdkit import Chem

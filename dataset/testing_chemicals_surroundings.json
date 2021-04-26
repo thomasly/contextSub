@@ -15,7 +15,10 @@
     "X": [
         "Clc1ccccc1",
         "Clc1cccc(Cl)c1",
-        "Clc1cc(Cl)cc(Cl)c1"
+        "Clc1cc(Cl)cc(Cl)c1",
+        "ClCc1ccccc1",
+        "ClC(Cl)c1ccccc1",
+        "Brc1ccccc1"
     ],
     "R": [
         "Cc1ccccc1",
