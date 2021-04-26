@@ -23,7 +23,7 @@ criterion = nn.BCEWithLogitsLoss(reduction="none")
 def train(args, model, device, loader, optimizer):
     model.train()
 
-    for step, batch in enumerate(tqdm(loader, desc="Iteration")):
+    for _, batch in enumerate(tqdm(loader, desc="Iteration")):
         batch = batch.to(device)
         pred = model(batch.x, batch.edge_index, batch.edge_attr, batch.batch)
         y = batch.y.view(pred.shape).to(torch.float64)
@@ -51,7 +51,7 @@ def eval(args, model, device, loader):
     y_true = []
     y_scores = []
 
-    for step, batch in enumerate(tqdm(loader, desc="Iteration")):
+    for _, batch in enumerate(tqdm(loader, desc="Iteration")):
         batch = batch.to(device)
 
         with torch.no_grad():
@@ -209,13 +209,15 @@ def main():
         raise ValueError("Invalid dataset name.")
 
     # set up dataset
-    dataset = MoleculeDataset("dataset/" + args.dataset, dataset=args.dataset)
+    dataset = MoleculeDataset(
+        "contextSub/dataset/" + args.dataset, dataset=args.dataset
+    )
 
     print(dataset)
 
     if args.split == "scaffold":
         smiles_list = pd.read_csv(
-            "dataset/" + args.dataset + "/processed/smiles.csv", header=None
+            "contextSub/dataset/" + args.dataset + "/processed/smiles.csv", header=None
         )[0].tolist()
         train_dataset, valid_dataset, test_dataset = scaffold_split(
             dataset,
@@ -238,7 +240,7 @@ def main():
         print("random")
     elif args.split == "random_scaffold":
         smiles_list = pd.read_csv(
-            "dataset/" + args.dataset + "/processed/smiles.csv", header=None
+            "contextSub/dataset/" + args.dataset + "/processed/smiles.csv", header=None
         )[0].tolist()
         train_dataset, valid_dataset, test_dataset = random_scaffold_split(
             dataset,
