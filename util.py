@@ -4,7 +4,7 @@ import json
 import torch
 import networkx as nx
 from rdkit import Chem
-from rdkit.Chem import AllChem
+from rdkit.Chem import AllChem, rdPartialCharges
 import pandas as pd
 import numpy as np
 from torch_geometric.data import Data
@@ -79,22 +79,34 @@ def split_rdkit_mol_obj(mol):
     return mol_species_list
 
 
-def mol_to_graph_data_obj_simple(mol):
+def mol_to_graph_data_obj_simple(mol, partial_charge=False):
     """
     Converts rdkit mol object to graph Data object required by the pytorch
     geometric package. NB: Uses simplified atom and bond features, and represent
-    as indices
-    :param mol: rdkit mol object
-    :return: graph data object with the attributes: x, edge_index, edge_attr
+    as indices.
+
+    Args:
+        mol: rdkit mol object.
+        partial_charge (bool): if to add atom partial charge as atom property.
+
+    Returns:
+        graph data object with the attributes: x, edge_index, edge_attr
     """
     # atoms, num_atom_features = 2
     atom_features_list = []
+    if partial_charge:
+        rdPartialCharges.ComputeGasteigerCharges(mol)
     for atom in mol.GetAtoms():
         atom_feature = [
             allowable_features["possible_atomic_num_list"].index(atom.GetAtomicNum())
         ] + [allowable_features["possible_chirality_list"].index(atom.GetChiralTag())]
+        if partial_charge:
+            atom_feature += [atom.GetDoubleProp("_GasteigerCharge")]
         atom_features_list.append(atom_feature)
-    x = torch.tensor(np.array(atom_features_list), dtype=torch.long)
+    if partial_charge:
+        x = torch.tensor(np.array(atom_features_list), dtype=torch.double)
+    else:
+        x = torch.tensor(np.array(atom_features_list), dtype=torch.long)
 
     # bonds
     num_bond_features = 2  # bond type, bond direction
@@ -186,9 +198,13 @@ def graph_data_obj_to_nx_simple(data):
     atom_features = data.x.cpu().numpy()
     num_atoms = atom_features.shape[0]
     for i in range(num_atoms):
-        atomic_num_idx, chirality_tag_idx = atom_features[i]
-        G.add_node(i, atom_num_idx=atomic_num_idx, chirality_tag_idx=chirality_tag_idx)
-        pass
+        atomic_num_idx, chirality_tag_idx, partial_charge = atom_features[i]
+        G.add_node(
+            i,
+            atom_num_idx=atomic_num_idx,
+            chirality_tag_idx=chirality_tag_idx,
+            partial_charge=partial_charge,
+        )
 
     # bonds
     edge_index = data.edge_index.cpu().numpy()
