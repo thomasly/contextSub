@@ -28,6 +28,7 @@ class MoleculeDataset(InMemoryDataset):
         pre_transform=None,
         pre_filter=None,
         dataset="zinc250k",
+        partial_charge=False,
     ):
         """
         The main Dataset class for the project.
@@ -39,9 +40,11 @@ class MoleculeDataset(InMemoryDataset):
                 data preprocessing.
             prefilter (callable): the one-time filter for data preprocessing.
             dataset (str): name of the dataset.
+            partial_charge (bool): use partial charge property.
         """
         self.dataset = dataset
         self.root = root
+        self.partial_charge = partial_charge
         super(MoleculeDataset, self).__init__(
             root, transform, pre_transform, pre_filter
         )
@@ -64,7 +67,7 @@ class MoleculeDataset(InMemoryDataset):
             rdkit_mol = mols[i]
             if rdkit_mol is None:
                 continue
-            data = mol_to_graph_data_obj_simple(rdkit_mol)
+            data = mol_to_graph_data_obj_simple(rdkit_mol, self.partial_charge)
             data.id = torch.tensor([i])
             if len(labels.shape) > 1:
                 data.y = torch.tensor(labels[i, :])
@@ -87,7 +90,7 @@ class MoleculeDataset(InMemoryDataset):
             if rdkit_mol is None:
                 continue
             else:
-                data = mol_to_graph_data_obj_simple(rdkit_mol)
+                data = mol_to_graph_data_obj_simple(rdkit_mol, self.partial_charge)
                 # add mol id
                 id = int(zinc_id_list[i].split("ZINC")[1].lstrip("0"))
                 data.id = torch.tensor([id])
@@ -108,7 +111,7 @@ class MoleculeDataset(InMemoryDataset):
             if rdkit_mol is not None:
                 mw = Descriptors.MolWt(rdkit_mol)
                 if 50 <= mw <= 900:
-                    data = mol_to_graph_data_obj_simple(rdkit_mol)
+                    data = mol_to_graph_data_obj_simple(rdkit_mol, self.partial_charge)
                     # manually add mol id
                     data.id = torch.tensor([i])
                     data.substructs = get_substructs(rdkit_mol)
@@ -722,18 +725,20 @@ def create_all_datasets():
     for dataset_name in downstream_dir:
         print(dataset_name)
         root = "contextSub/dataset/" + dataset_name
-        dataset = MoleculeDataset(root, dataset=dataset_name)
+        dataset = MoleculeDataset(root, dataset=dataset_name, partial_charge=True)
         print(dataset)
 
     print("chembl")
-    dataset = MoleculeDataset(root="contextSub/dataset/chembl", dataset="chembl")
-    print(dataset)
-
-    print("zinc")
     dataset = MoleculeDataset(
-        root="contextSub/dataset/zinc_standard_agent", dataset="zinc_standard_agent"
+        root="contextSub/dataset/chembl", dataset="chembl", partial_charge=True
     )
     print(dataset)
+
+    # print("zinc")
+    # dataset = MoleculeDataset(
+    #     root="contextSub/dataset/zinc_standard_agent", dataset="zinc_standard_agent"
+    # )
+    # print(dataset)
 
 
 # test MoleculeDataset object

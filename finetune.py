@@ -310,11 +310,8 @@ def main():
     test_acc_list = []
 
     if not args.filename == "":
-        fname = (
-            "contextSub/runs/finetune_cls_runseed"
-            + str(args.runseed)
-            + "/"
-            + args.filename
+        fname = os.path.join(
+            "contextSub", "runs", args.filename, f"finetune_cls_runseed{args.runseed}"
         )
         # delete the directory if there exists one
         if os.path.exists(fname):

@@ -136,7 +136,7 @@ class NegativeEdge:
 
 
 class ExtractSubstructureContextPair:
-    def __init__(self, k, l1, l2):
+    def __init__(self, k, l1, l2, partial_charge=False):
         """
         Randomly selects a node from the data object, and adds attributes
         that contain the substructure that corresponds to k hop neighbours
@@ -150,6 +150,7 @@ class ExtractSubstructureContextPair:
         self.k = k
         self.l1 = l1
         self.l2 = l2
+        self.partial_charge = partial_charge
 
         # for the special case of 0, addresses the quirk with
         # single_source_shortest_path_length
@@ -179,7 +180,9 @@ class ExtractSubstructureContextPair:
         if root_idx is None:
             root_idx = random.sample(range(num_atoms), 1)[0]
 
-        G = graph_data_obj_to_nx_simple(data)  # same ordering as input data obj
+        G = graph_data_obj_to_nx_simple(
+            data, self.partial_charge
+        )  # same ordering as input data obj
 
         # Get k-hop subgraph rooted at specified atom idx
         substruct_node_idxes = nx.single_source_shortest_path_length(
@@ -190,7 +193,9 @@ class ExtractSubstructureContextPair:
             substruct_G, substruct_node_map = reset_idxes(substruct_G)  # need
             # to reset node idx to 0 -> num_nodes - 1, otherwise data obj does not
             # make sense, since the node indices in data obj must start at 0
-            substruct_data = nx_to_graph_data_obj_simple(substruct_G)
+            substruct_data = nx_to_graph_data_obj_simple(
+                substruct_G, self.partial_charge
+            )
             data.x_substruct = substruct_data.x
             data.edge_attr_substruct = substruct_data.edge_attr
             data.edge_index_substruct = substruct_data.edge_index
@@ -213,7 +218,7 @@ class ExtractSubstructureContextPair:
             context_G, context_node_map = reset_idxes(context_G)  # need to
             # reset node idx to 0 -> num_nodes - 1, otherwise data obj does not
             # make sense, since the node indices in data obj must start at 0
-            context_data = nx_to_graph_data_obj_simple(context_G)
+            context_data = nx_to_graph_data_obj_simple(context_G, self.partial_charge)
             data.x_context = context_data.x
             data.edge_attr_context = context_data.edge_attr
             data.edge_index_context = context_data.edge_index
@@ -242,7 +247,7 @@ class ExtractSubstructureContextPair:
 
 
 class ExtractPubchemSubstructs:
-    def __init__(self, k, l1, l2):
+    def __init__(self, k, l1, l2, partial_charge=False):
         """
         Randomly selects a Pubchem substructure from the data object, and adds
         attributes that contain the substructure that corresponds to k hop neighbours
@@ -256,6 +261,7 @@ class ExtractPubchemSubstructs:
         self.k = k
         self.l1 = l1
         self.l2 = l2
+        self.partial_charge = partial_charge
 
         # for the special case of 0, addresses the quirk with
         # single_source_shortest_path_length
@@ -284,7 +290,9 @@ class ExtractPubchemSubstructs:
         root_pattern = random.sample((data.substructs), 1)[0]
         root_substruct = random.sample(root_pattern, 1)[0]
 
-        G = graph_data_obj_to_nx_simple(data)  # same ordering as input data obj
+        G = graph_data_obj_to_nx_simple(
+            data, self.partial_charge
+        )  # same ordering as input data obj
 
         # Get k-hop subgraph rooted at specified substruct
         substruct_node_idxes = set()
@@ -296,7 +304,9 @@ class ExtractPubchemSubstructs:
             substruct_G, substruct_node_map = reset_idxes(substruct_G)  # need
             # to reset node idx to 0 -> num_nodes - 1, otherwise data obj does not
             # make sense, since the node indices in data obj must start at 0
-            substruct_data = nx_to_graph_data_obj_simple(substruct_G)
+            substruct_data = nx_to_graph_data_obj_simple(
+                substruct_G, self.partial_charge
+            )
             data.x_substruct = substruct_data.x
             data.edge_attr_substruct = substruct_data.edge_attr
             data.edge_index_substruct = substruct_data.edge_index
@@ -320,7 +330,7 @@ class ExtractPubchemSubstructs:
             context_G, context_node_map = reset_idxes(context_G)  # need to
             # reset node idx to 0 -> num_nodes - 1, otherwise data obj does not
             # make sense, since the node indices in data obj must start at 0
-            context_data = nx_to_graph_data_obj_simple(context_G)
+            context_data = nx_to_graph_data_obj_simple(context_G, self.partial_charge)
             data.x_context = context_data.x
             data.edge_attr_context = context_data.edge_attr
             data.edge_index_context = context_data.edge_index

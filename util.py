@@ -104,7 +104,7 @@ def mol_to_graph_data_obj_simple(mol, partial_charge=False):
             atom_feature += [atom.GetDoubleProp("_GasteigerCharge")]
         atom_features_list.append(atom_feature)
     if partial_charge:
-        x = torch.tensor(np.array(atom_features_list), dtype=torch.double)
+        x = torch.tensor(np.array(atom_features_list), dtype=torch.float)
     else:
         x = torch.tensor(np.array(atom_features_list), dtype=torch.long)
 
@@ -138,7 +138,9 @@ def mol_to_graph_data_obj_simple(mol, partial_charge=False):
     return data
 
 
-def graph_data_obj_to_mol_simple(data_x, data_edge_index, data_edge_attr):
+def graph_data_obj_to_mol_simple(
+    data_x, data_edge_index, data_edge_attr, partial_charge=False
+):
     """
     Convert pytorch geometric data obj to rdkit mol object. NB: Uses simplified
     atom and bond features, and represent as indices.
@@ -153,11 +155,16 @@ def graph_data_obj_to_mol_simple(data_x, data_edge_index, data_edge_attr):
     atom_features = data_x.cpu().numpy()
     num_atoms = atom_features.shape[0]
     for i in range(num_atoms):
-        atomic_num_idx, chirality_tag_idx = atom_features[i]
+        if partial_charge:
+            atomic_num_idx, chirality_tag_idx, pc = atom_features[i]
+        else:
+            atomic_num_idx, chirality_tag_idx = atom_features[i, :2]
         atomic_num = allowable_features["possible_atomic_num_list"][atomic_num_idx]
         chirality_tag = allowable_features["possible_chirality_list"][chirality_tag_idx]
         atom = Chem.Atom(atomic_num)
         atom.SetChiralTag(chirality_tag)
+        if partial_charge:
+            atom.SetDoubleProp("_GasteigerCharge", pc)
         mol.AddAtom(atom)
 
     # bonds
@@ -183,7 +190,7 @@ def graph_data_obj_to_mol_simple(data_x, data_edge_index, data_edge_attr):
     return mol
 
 
-def graph_data_obj_to_nx_simple(data):
+def graph_data_obj_to_nx_simple(data, partial_charge=False):
     """
     Converts graph Data object required by the pytorch geometric package to
     network x data object. NB: Uses simplified atom and bond features,
@@ -198,13 +205,19 @@ def graph_data_obj_to_nx_simple(data):
     atom_features = data.x.cpu().numpy()
     num_atoms = atom_features.shape[0]
     for i in range(num_atoms):
-        atomic_num_idx, chirality_tag_idx, partial_charge = atom_features[i]
-        G.add_node(
-            i,
-            atom_num_idx=atomic_num_idx,
-            chirality_tag_idx=chirality_tag_idx,
-            partial_charge=partial_charge,
-        )
+        if partial_charge:
+            atomic_num_idx, chirality_tag_idx, pc = atom_features[i]
+            G.add_node(
+                i,
+                atom_num_idx=atomic_num_idx,
+                chirality_tag_idx=chirality_tag_idx,
+                partial_charge=pc,
+            )
+        else:
+            atomic_num_idx, chirality_tag_idx = atom_features[i, :2]
+            G.add_node(
+                i, atom_num_idx=atomic_num_idx, chirality_tag_idx=chirality_tag_idx
+            )
 
     # bonds
     edge_index = data.edge_index.cpu().numpy()
@@ -225,7 +238,7 @@ def graph_data_obj_to_nx_simple(data):
     return G
 
 
-def nx_to_graph_data_obj_simple(G):
+def nx_to_graph_data_obj_simple(G, partial_charge=False):
     """
     Converts nx graph to pytorch geometric Data object. Assume node indices
     are numbered from 0 to num_nodes - 1. NB: Uses simplified atom and bond
@@ -238,9 +251,19 @@ def nx_to_graph_data_obj_simple(G):
     # atoms, num_atom_features = 2, (atom type, chirality tag)
     atom_features_list = []
     for _, node in G.nodes(data=True):
-        atom_feature = [node["atom_num_idx"], node["chirality_tag_idx"]]
+        if partial_charge:
+            atom_feature = [
+                node["atom_num_idx"],
+                node["chirality_tag_idx"],
+                node["partial_charge"],
+            ]
+        else:
+            atom_feature = [node["atom_num_idx"], node["chirality_tag_idx"]]
         atom_features_list.append(atom_feature)
-    x = torch.tensor(np.array(atom_features_list), dtype=torch.long)
+    if partial_charge:
+        x = torch.tensor(np.array(atom_features_list), dtype=torch.float)
+    else:
+        x = torch.tensor(np.array(atom_features_list), dtype=torch.long)
 
     # bonds
     num_bond_features = 2  # bond type, bond direction

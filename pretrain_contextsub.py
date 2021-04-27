@@ -35,7 +35,8 @@ def cycle_index(num, shift):
     return arr
 
 
-criterion = nn.BCEWithLogitsLoss()
+# criterion = nn.BCEWithLogitsLoss()
+criterion = nn.BCELoss()
 
 
 def train(
@@ -153,11 +154,11 @@ def train(
             loss_pos.detach().cpu().item() + loss_neg.detach().cpu().item()
         )
         acc_accum += 0.5 * (
-            float(torch.sum(pred_pos > 0).detach().cpu().item()) / len(pred_pos)
-            + float(torch.sum(pred_neg < 0).detach().cpu().item()) / len(pred_neg)
+            float(torch.sum(pred_pos > 0.5).detach().cpu().item()) / len(pred_pos)
+            + float(torch.sum(pred_neg < 0.5).detach().cpu().item()) / len(pred_neg)
         )
 
-    return balanced_loss_accum / step, acc_accum / step
+    return balanced_loss_accum / (step + 1), acc_accum / (step + 1)
 
 
 def main():
@@ -240,6 +241,11 @@ def main():
         default=8,
         help="number of workers for dataset loading",
     )
+    parser.add_argument(
+        "--partial_charge",
+        action="store_true",
+        help="If to use atom partial charge as property.",
+    )
     args = parser.parse_args()
 
     torch.manual_seed(0)
@@ -262,7 +268,10 @@ def main():
     dataset = MoleculeDataset(
         "contextSub/dataset/" + args.dataset,
         dataset=args.dataset,
-        transform=ExtractPubchemSubstructs(args.num_layer, l1, l2),
+        transform=ExtractPubchemSubstructs(
+            args.num_layer, l1, l2, partial_charge=args.partial_charge
+        ),
+        partial_charge=args.partial_charge,
     )
     loader = DataLoaderPubchemContext(
         dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers
@@ -275,6 +284,7 @@ def main():
         JK=args.JK,
         drop_ratio=args.dropout_ratio,
         gnn_type=args.gnn_type,
+        partial_charge=args.partial_charge,
     ).to(device)
     model_context = GNN(
         int(l2 - l1),
@@ -304,7 +314,8 @@ def main():
             optimizer_context,
             device,
         )
-        print(train_loss, train_acc)
+        print()
+        print(f"train loss: {train_loss}, train acc: {train_acc}")
 
     if not args.output_model_file == "":
         os.makedirs(os.path.dirname(args.output_model_file), exist_ok=True)
