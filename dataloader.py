@@ -1,5 +1,6 @@
 import random
 
+import torch
 import torch.utils.data
 import networkx as nx
 
@@ -177,6 +178,7 @@ class ExtractSubstructureContextPair:
         data.overlap_context_substruct_idx
         """
         num_atoms = data.x.size()[0]
+        data.x[torch.isnan(data.x)] = 0
         if root_idx is None:
             root_idx = random.sample(range(num_atoms), 1)[0]
 
