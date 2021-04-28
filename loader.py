@@ -112,6 +112,8 @@ class MoleculeDataset(InMemoryDataset):
                 mw = Descriptors.MolWt(rdkit_mol)
                 if 50 <= mw <= 900:
                     data = mol_to_graph_data_obj_simple(rdkit_mol, self.partial_charge)
+                    if data is None:
+                        continue
                     # manually add mol id
                     data.id = torch.tensor([i])
                     data.substructs = get_substructs(rdkit_mol)

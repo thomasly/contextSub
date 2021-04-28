@@ -96,6 +96,9 @@ def mol_to_graph_data_obj_simple(mol, partial_charge=False):
     atom_features_list = []
     if partial_charge:
         rdPartialCharges.ComputeGasteigerCharges(mol)
+        for atom in mol.GetAtoms():
+            if np.isnan(atom.GetDoubleProp("_GasteigerCharge")):
+                return
     for atom in mol.GetAtoms():
         atom_feature = [
             allowable_features["possible_atomic_num_list"].index(atom.GetAtomicNum())
