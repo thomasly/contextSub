@@ -449,8 +449,9 @@ def evaluate_pretraining(pattern, chemicals, model_path, partial_charge=False):
     return pattern_embs, y
 
 
-def plot_embedding(X, y, title=None, mode="text"):
-    cmap = ["red", "green", "blue", "orange", "magenta", "gray"]
+def plot_embedding(X, y, title=None, mode="text", cmap=None):
+    if cmap is None:
+        cmap = ["red", "green", "blue", "orange", "magenta", "gray"]
     x_min, x_max = np.min(X, 0), np.max(X, 0)
     X = (X - x_min) / (x_max - x_min)
 
