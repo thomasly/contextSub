@@ -68,6 +68,8 @@ class MoleculeDataset(InMemoryDataset):
             if rdkit_mol is None:
                 continue
             data = mol_to_graph_data_obj_simple(rdkit_mol, self.partial_charge)
+            if data is None:
+                continue
             data.id = torch.tensor([i])
             if len(labels.shape) > 1:
                 data.y = torch.tensor(labels[i, :])

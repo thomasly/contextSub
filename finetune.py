@@ -174,6 +174,11 @@ def main():
         default=4,
         help="number of workers for dataset loading",
     )
+    parser.add_argument(
+        "--partial_charge",
+        action="store_true",
+        help="to use partial charge atom property",
+    )
     args = parser.parse_args()
 
     torch.manual_seed(args.runseed)
@@ -210,7 +215,9 @@ def main():
 
     # set up dataset
     dataset = MoleculeDataset(
-        "contextSub/dataset/" + args.dataset, dataset=args.dataset
+        "contextSub/dataset/" + args.dataset,
+        dataset=args.dataset,
+        partial_charge=args.partial_charge,
     )
 
     print(dataset)
@@ -285,6 +292,7 @@ def main():
         drop_ratio=args.dropout_ratio,
         graph_pooling=args.graph_pooling,
         gnn_type=args.gnn_type,
+        partial_charge=args.partial_charge,
     )
     if not args.input_model_file == "":
         model.from_pretrained(args.input_model_file)
@@ -340,9 +348,9 @@ def main():
         train_acc_list.append(train_acc)
 
         if not args.filename == "":
-            writer.add_scalar("data/train auc", train_acc, epoch)
-            writer.add_scalar("data/val auc", val_acc, epoch)
-            writer.add_scalar("data/test auc", test_acc, epoch)
+            writer.add_scalar("data/train_auc", train_acc, epoch)
+            writer.add_scalar("data/val_auc", val_acc, epoch)
+            writer.add_scalar("data/test_auc", test_acc, epoch)
 
         print("")
 

@@ -386,7 +386,7 @@ def get_substructs(
     return substructs
 
 
-def _load_candidates(pattern, chemicals):
+def _load_candidates(pattern, chemicals, partial_charge=False):
     candidates = json.load(open(chemicals))
     data_list = []
     y = list()
@@ -396,7 +396,7 @@ def _load_candidates(pattern, chemicals):
         label += 1
         for sm in sms:
             mol = Chem.MolFromSmiles(sm)
-            data = mol_to_graph_data_obj_simple(mol)
+            data = mol_to_graph_data_obj_simple(mol, partial_charge=partial_charge)
             data.atom = str(key)
             data.substructs = torch.tensor(
                 mol.GetSubstructMatch(pattern), dtype=torch.int
@@ -417,7 +417,7 @@ def _get_slices(batch):
     return slices
 
 
-def evaluate_pretraining(pattern, chemicals, model_path):
+def evaluate_pretraining(pattern, chemicals, model_path, partial_charge=False):
     """ Evaluate the pretraining by analyzing the embeddings of the same substructure
     within different contexts.
 
@@ -426,10 +426,17 @@ def evaluate_pretraining(pattern, chemicals, model_path):
         chemicals (str): path to the json file with chemicals.
         model_path (str): path to the pretrained model.
     """
-    data_list, y = _load_candidates(pattern, chemicals)
+    data_list, y = _load_candidates(pattern, chemicals, partial_charge)
     batch = Batch.from_data_list(data_list)
     slices = _get_slices(batch)
-    model = GNN(num_layer=5, emb_dim=300, JK="last", drop_ratio=0.5, gnn_type="gin")
+    model = GNN(
+        num_layer=5,
+        emb_dim=300,
+        JK="last",
+        drop_ratio=0.5,
+        gnn_type="gin",
+        partial_charge=partial_charge,
+    )
     model.load_state_dict(torch.load(model_path))
     model.eval()
     embeddings = model(batch)
