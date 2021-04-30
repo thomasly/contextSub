@@ -6,6 +6,7 @@ runs/
 *.pt
 dataset/chembl/*
 dataset/*/processed
+dataset/*/processed.old
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

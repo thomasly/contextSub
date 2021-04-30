@@ -241,17 +241,29 @@ class GNN(torch.nn.Module):
 
     """
 
-    def __init__(self, num_layer, emb_dim, JK="last", drop_ratio=0, gnn_type="gin"):
+    def __init__(
+        self,
+        num_layer,
+        emb_dim,
+        JK="last",
+        drop_ratio=0,
+        gnn_type="gin",
+        partial_charge=False,
+    ):
         super(GNN, self).__init__()
         self.num_layer = num_layer
         self.drop_ratio = drop_ratio
         self.JK = JK
+        self.partial_charge = partial_charge
 
         if self.num_layer < 2:
             raise ValueError("Number of GNN layers must be greater than 1.")
-
-        self.x_embedding1 = torch.nn.Embedding(num_atom_type, emb_dim)
-        self.x_embedding2 = torch.nn.Embedding(num_chirality_tag, emb_dim)
+        if partial_charge:
+            self.x_embedding1 = torch.nn.Embedding(num_atom_type, emb_dim - 1)
+            self.x_embedding2 = torch.nn.Embedding(num_chirality_tag, emb_dim - 1)
+        else:
+            self.x_embedding1 = torch.nn.Embedding(num_atom_type, emb_dim)
+            self.x_embedding2 = torch.nn.Embedding(num_chirality_tag, emb_dim)
 
         torch.nn.init.xavier_uniform_(self.x_embedding1.weight.data)
         torch.nn.init.xavier_uniform_(self.x_embedding2.weight.data)
@@ -283,7 +295,15 @@ class GNN(torch.nn.Module):
         else:
             raise ValueError("unmatched number of arguments.")
 
-        x = self.x_embedding1(x[:, 0]) + self.x_embedding2(x[:, 1])
+        if self.partial_charge:
+            x_emb = self.x_embedding1(x[:, 0].to(torch.long)) + self.x_embedding2(
+                x[:, 1].to(torch.long)
+            )
+            x = torch.cat([x_emb, x[:, 2].view(-1, 1).to(x_emb.dtype)], 1)
+        else:
+            x = self.x_embedding1(x[:, 0].to(torch.long)) + self.x_embedding2(
+                x[:, 1].to(torch.long)
+            )
 
         h_list = [x]
         for layer in range(self.num_layer):
@@ -338,6 +358,7 @@ class GNN_graphpred(torch.nn.Module):
         drop_ratio=0,
         graph_pooling="mean",
         gnn_type="gin",
+        partial_charge=False,
     ):
         super(GNN_graphpred, self).__init__()
         self.num_layer = num_layer
@@ -345,11 +366,19 @@ class GNN_graphpred(torch.nn.Module):
         self.JK = JK
         self.emb_dim = emb_dim
         self.num_tasks = num_tasks
+        self.partial_charge = partial_charge
 
         if self.num_layer < 2:
             raise ValueError("Number of GNN layers must be greater than 1.")
 
-        self.gnn = GNN(num_layer, emb_dim, JK, drop_ratio, gnn_type=gnn_type)
+        self.gnn = GNN(
+            num_layer,
+            emb_dim,
+            JK,
+            drop_ratio,
+            gnn_type=gnn_type,
+            partial_charge=self.partial_charge,
+        )
 
         # Different kind of graph pooling
         if graph_pooling == "sum":
