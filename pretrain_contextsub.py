@@ -96,6 +96,7 @@ def train(
             )
             if args.norm_output:
                 context_rep = sqrt_norm(context_rep)
+
             # negative contexts are obtained by shifting the indicies of context
             # embeddings
             neg_context_rep = torch.cat(
@@ -107,6 +108,7 @@ def train(
             )
             if args.norm_output:
                 neg_context_rep = sqrt_norm(neg_context_rep)
+
 
             pred_pos = torch.sum(substruct_rep * context_rep, dim=1)
             pred_neg = torch.sum(
