@@ -109,7 +109,6 @@ def train(
             if args.norm_output:
                 neg_context_rep = sqrt_norm(neg_context_rep)
 
-
             pred_pos = torch.sum(substruct_rep * context_rep, dim=1)
             pred_neg = torch.sum(
                 substruct_rep.repeat((args.neg_samples, 1)) * neg_context_rep, dim=1
@@ -292,6 +291,20 @@ def main():
         action="store_true",
         help="If to use atom partial charge as property.",
     )
+    parser.add_argument(
+        "--input_mlp",
+        action="store_true",
+        help="use MLP instead of Embedding layer for input",
+    )
+    parser.add_argument(
+        "--node_feat_dim",
+        type=int,
+        default=3,
+        help="the dimension of the node features",
+    )
+    parser.add_argument(
+        "--edge_feat_dim", type=int, default=2, help="dimension of the edge features"
+    )
     args = parser.parse_args()
 
     torch.manual_seed(0)
@@ -331,6 +344,9 @@ def main():
         drop_ratio=args.dropout_ratio,
         gnn_type=args.gnn_type,
         partial_charge=args.partial_charge,
+        input_mlp=args.input_mlp,
+        node_feat_dim=args.node_feat_dim,
+        edge_feat_dim=args.edge_feat_dim,
     ).to(device)
     model_context = GNN(
         int(l2 - l1),
@@ -338,6 +354,10 @@ def main():
         JK=args.JK,
         drop_ratio=args.dropout_ratio,
         gnn_type=args.gnn_type,
+        partial_charge=args.partial_charge,
+        input_mlp=args.input_mlp,
+        node_feat_dim=args.node_feat_dim,
+        edge_feat_dim=args.edge_feat_dim,
     ).to(device)
 
     # set up optimizer for the two GNNs
