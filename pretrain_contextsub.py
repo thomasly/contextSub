@@ -60,6 +60,11 @@ def train(
     model_substruct.train()
     model_context.train()
 
+    if args.norm_output:
+        criterion = nn.MSELoss()
+    else:
+        criterion = nn.BCEWithLogitsLoss()
+
     balanced_loss_accum = 0
     acc_accum = 0
 
@@ -73,7 +78,8 @@ def train(
         substruct_rep = pool_func(
             substruct_rep, batch.batch_center_substruct, mode=args.context_pooling
         )
-        substruct_rep = sqrt_norm(substruct_rep)
+        if args.norm_output:
+            substruct_rep = sqrt_norm(substruct_rep)
 
         # creating context representations
         overlapped_node_rep = model_context(
@@ -88,7 +94,9 @@ def train(
                 batch.batch_overlapped_context,
                 mode=args.context_pooling,
             )
-            context_rep = sqrt_norm(context_rep)
+            if args.norm_output:
+                context_rep = sqrt_norm(context_rep)
+
             # negative contexts are obtained by shifting the indicies of context
             # embeddings
             neg_context_rep = torch.cat(
@@ -98,12 +106,18 @@ def train(
                 ],
                 dim=0,
             )
-            neg_context_rep = sqrt_norm(neg_context_rep)
+            if args.norm_output:
+                neg_context_rep = sqrt_norm(neg_context_rep)
+
 
             pred_pos = torch.sum(substruct_rep * context_rep, dim=1)
             pred_neg = torch.sum(
                 substruct_rep.repeat((args.neg_samples, 1)) * neg_context_rep, dim=1
             )
+            if args.norm_output:
+                # change the value range from [-1, 1] to [0, 1]
+                pred_pos = 0.5 * (pred_pos + 1.0)
+                pred_neg = 0.5 * (pred_neg + 1.0)
 
         elif args.mode == "skipgram":
 
@@ -171,9 +185,14 @@ def train(
         balanced_loss_accum += float(
             loss_pos.detach().cpu().item() + loss_neg.detach().cpu().item()
         )
+        if args.norm_output:
+            threshold = 0.5
+        else:
+            threshold = 0
         acc_accum += 0.5 * (
-            float(torch.sum(pred_pos > 0).detach().cpu().item()) / len(pred_pos)
-            + float(torch.sum(pred_neg < 0).detach().cpu().item()) / len(pred_neg)
+            float(torch.sum(pred_pos > threshold).detach().cpu().item()) / len(pred_pos)
+            + float(torch.sum(pred_neg < threshold).detach().cpu().item())
+            / len(pred_neg)
         )
 
     return balanced_loss_accum / (step + 1), acc_accum / (step + 1)
@@ -216,6 +235,12 @@ def main():
     )
     parser.add_argument(
         "--emb_dim", type=int, default=300, help="embedding dimensions (default: 300)"
+    )
+    parser.add_argument(
+        "--norm_output",
+        action="store_true",
+        help="normalize the GNN output to unit vectors before applying dot "
+        "multiplication",
     )
     parser.add_argument(
         "--dropout_ratio", type=float, default=0, help="dropout ratio (default: 0)"
