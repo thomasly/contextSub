@@ -472,25 +472,46 @@ class GNN_graphpred(torch.nn.Module):
         # self.drop_ratio)
         self.gnn.load_state_dict(torch.load(model_file))
 
-    def forward(self, *argv):
-        if len(argv) == 4:
-            x, edge_index, edge_attr, batch = argv[0], argv[1], argv[2], argv[3]
-        elif len(argv) == 1:
-            data = argv[0]
-            x, edge_index, edge_attr, batch = (
-                data.x,
-                data.edge_index,
-                data.edge_attr,
-                data.batch,
-            )
-        else:
-            raise ValueError("unmatched number of arguments.")
+    def _count_batch(self, batch):
+        """ count the number of node of each graph in the batch.
+        """
+        flag = batch[0].cpu().detach().item()
+        counts = [0]
+        for i, b in enumerate(batch):
+            if flag != b.cpu().detach().item():
+                counts.append(i)
+                flag = b.cpu().detach().item()
+        return counts
 
+    def sub_pool(self, node_presentation, data_list):
+        total_len = 0
+        for data in data_list:
+            for patterns in data.substructs:
+                for substruct in patterns:
+                    total_len += len(substruct)
+        sub_embs = torch.zeros(
+            (total_len, node_presentation.size(1)), dtype=node_presentation.dtype
+        )
+        sub_batch = torch.zeros((total_len), dtype=torch.long)
+        n, i, j = 0, 0, 0
+        for data in data_list:
+            for patterns in data.substructs:
+                for substruct in patterns:
+                    for atom_idx in substruct:
+                        sub_embs[i] = node_presentation[atom_idx + n]
+                        sub_batch[i] = j
+                        i += 1
+                    j += 1
+            n += data.x.size(0)
+        return sub_embs, sub_batch
+
+    def forward(self, x, edge_index, edge_attr, batch, data_list=[]):
+        """ data_list is the original data forming the batch with substructs
+        information.
+        """
         node_representation = self.gnn(x, edge_index, edge_attr)
         if not self.sub_level:
             return self.graph_pred_linear(self.pool(node_representation, batch))
         else:
-            return self.graph_pred_linear(
-                self.sub_pool(node_representation, data, batch)
-            )
-
+            sub_embs, sub_batch = self.sub_pool(node_representation, data_list, batch)
+            return self.graph_pred_linear(self.pool(sub_embs, sub_batch))
