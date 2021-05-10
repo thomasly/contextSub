@@ -383,6 +383,7 @@ class GNN_graphpred(torch.nn.Module):
         JK (str): last, concat, max or sum.
         graph_pooling (str): sum, mean, max, attention, set2set
         gnn_type: gin, gcn, graphsage, gat
+        sub_level (bool): substructure level based embedding output
 
     See https://arxiv.org/abs/1810.00826
     JK-net: https://arxiv.org/abs/1806.03536
@@ -401,6 +402,7 @@ class GNN_graphpred(torch.nn.Module):
         input_mlp=False,
         node_feat_dim=None,
         edge_feat_dim=None,
+        sub_level=False,
     ):
         super(GNN_graphpred, self).__init__()
         self.num_layer = num_layer
@@ -410,6 +412,7 @@ class GNN_graphpred(torch.nn.Module):
         self.num_tasks = num_tasks
         self.partial_charge = partial_charge
         self.input_mlp = input_mlp
+        self.sub_level = sub_level
 
         if self.num_layer < 2:
             raise ValueError("Number of GNN layers must be greater than 1.")
@@ -484,5 +487,10 @@ class GNN_graphpred(torch.nn.Module):
             raise ValueError("unmatched number of arguments.")
 
         node_representation = self.gnn(x, edge_index, edge_attr)
+        if not self.sub_level:
+            return self.graph_pred_linear(self.pool(node_representation, batch))
+        else:
+            return self.graph_pred_linear(
+                self.sub_pool(node_representation, data, batch)
+            )
 
-        return self.graph_pred_linear(self.pool(node_representation, batch))
