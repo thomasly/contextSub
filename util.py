@@ -425,6 +425,11 @@ def evaluate_pretraining(pattern, chemicals, model_path, partial_charge=False):
         pattern (RDKit Mol): the pattern to decide the centeral substructure.
         chemicals (str): path to the json file with chemicals.
         model_path (str): path to the pretrained model.
+        partial_charge (bool): the model takes partial charge as atom property.
+
+    Returns:
+        pattern_embs: the embeddings of patterns.
+        y: pattern labels based on input.
     """
     data_list, y = _load_candidates(pattern, chemicals, partial_charge)
     batch = Batch.from_data_list(data_list)

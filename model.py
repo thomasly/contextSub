@@ -485,15 +485,24 @@ class GNN_graphpred(torch.nn.Module):
 
     def sub_pool(self, node_presentation, data_list):
         total_len = 0
+        emb_len = 0
         for data in data_list:
             for patterns in data.substructs:
                 for substruct in patterns:
+                    emb_len += 1
                     total_len += len(substruct)
         sub_embs = torch.zeros(
-            (total_len, node_presentation.size(1)), dtype=node_presentation.dtype
+            (total_len, node_presentation.size(1)),
+            dtype=node_presentation.dtype,
+            device=node_presentation.device,
         )
-        sub_batch = torch.zeros((total_len), dtype=torch.long)
-        n, i, j = 0, 0, 0
+        sub_batch = torch.zeros(
+            (total_len), dtype=torch.long, device=node_presentation.device
+        )
+        emb_batch = torch.zeros(
+            (emb_len), dtype=torch.long, device=node_presentation.device
+        )
+        n, i, j, k = 0, 0, 0, 0
         for data in data_list:
             for patterns in data.substructs:
                 for substruct in patterns:
@@ -501,9 +510,11 @@ class GNN_graphpred(torch.nn.Module):
                         sub_embs[i] = node_presentation[atom_idx + n]
                         sub_batch[i] = j
                         i += 1
+                    emb_batch[j] = k
                     j += 1
             n += data.x.size(0)
-        return sub_embs, sub_batch
+            k += 1
+        return sub_embs, sub_batch, emb_batch
 
     def forward(self, x, edge_index, edge_attr, batch, data_list=[]):
         """ data_list is the original data forming the batch with substructs
@@ -513,5 +524,8 @@ class GNN_graphpred(torch.nn.Module):
         if not self.sub_level:
             return self.graph_pred_linear(self.pool(node_representation, batch))
         else:
-            sub_embs, sub_batch = self.sub_pool(node_representation, data_list, batch)
-            return self.graph_pred_linear(self.pool(sub_embs, sub_batch))
+            sub_embs, sub_batch, emb_batch = self.sub_pool(
+                node_representation, data_list
+            )
+            pooled = self.pool(self.pool(sub_embs, sub_batch), emb_batch)
+            return self.graph_pred_linear(pooled.to(x.device))
