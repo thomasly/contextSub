@@ -197,6 +197,11 @@ def main():
         help="GNN_graphpred model output substructure based embeddings and the model is"
         " fine-tuned based on that embedding.",
     )
+    parser.add_argument(
+        "--sub_input",
+        action="store_true",
+        help="Input graphs contain substructure information. For fine-tune only.",
+    )
     args = parser.parse_args()
 
     torch.manual_seed(args.runseed)
@@ -232,10 +237,20 @@ def main():
         raise ValueError("Invalid dataset name.")
 
     # set up dataset
+    if args.sub_input:
+        pattern_path = os.path.join(
+            "contextSub", "resources", "pubchemFPKeys_to_SMARTSpattern.csv"
+        )
+    else:
+        pattern_path = os.path.join(
+            "contextSub", "resources", "pubchemFPKeys_to_SMARTSpattern_filtered.csv"
+        )
     dataset = MoleculeDataset(
         "contextSub/dataset/" + args.dataset,
         dataset=args.dataset,
         partial_charge=args.partial_charge,
+        substruct_input=args.sub_input,
+        pattern_path=pattern_path,
     )
 
     print(dataset)

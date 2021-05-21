@@ -143,7 +143,9 @@ def get_substruct_edge_attrs(substruct, mol, starting_idx=0):
     return edge_index, edge_attr
 
 
-def mol_to_graph_data_obj_simple(mol, partial_charge=False, substruct_input=False):
+def mol_to_graph_data_obj_simple(
+    mol, partial_charge=False, substruct_input=False, pattern_path=None
+):
     """
     Converts rdkit mol object to graph Data object required by the pytorch
     geometric package. NB: Uses simplified atom and bond features, and represent
@@ -153,6 +155,7 @@ def mol_to_graph_data_obj_simple(mol, partial_charge=False, substruct_input=Fals
         mol: rdkit mol object.
         partial_charge (bool): if to add atom partial charge as atom property.
         substruct_input (bool): add substructure nodes into data.x
+        patten_path (str): path to the csv file with PubChem SMARTS patterns
     Returns:
         graph data object with the attributes: x, edge_index, edge_attr
     """
@@ -201,7 +204,7 @@ def mol_to_graph_data_obj_simple(mol, partial_charge=False, substruct_input=Fals
         edge_attr = torch.empty((0, num_bond_features), dtype=torch.long)
 
     data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
-    data.substructs = get_substructs(mol)
+    data.substructs = get_substructs(mol, pattern_path)
     starting_idx = len(list(mol.GetAtoms()))
     if substruct_input:
         for patterns in data.substructs:
@@ -436,12 +439,7 @@ def reset_idxes(G):
     return new_G, mapping
 
 
-def get_substructs(
-    mol,
-    pattern_path=osp.join(
-        "contextSub", "resources", "pubchemFPKeys_to_SMARTSpattern.csv"
-    ),
-):
+def get_substructs(mol, pattern_path=None):
     """ Get substructures from a mol.
 
     Args:
@@ -452,6 +450,10 @@ def get_substructs(
     Returns:
         substructs (list): list of lists of atom indices belonging to each substrucure.
     """
+    if pattern_path is None:
+        pattern_path = osp.join(
+            "contextSub", "resources", "pubchemFPKeys_to_SMARTSpattern.csv"
+        )
     patterns_df = pd.read_csv(pattern_path)
     patterns = [Chem.MolFromSmarts(sm) for sm in patterns_df.SMARTS]
     substructs = list()

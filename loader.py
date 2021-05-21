@@ -29,6 +29,8 @@ class MoleculeDataset(InMemoryDataset):
         pre_filter=None,
         dataset="zinc250k",
         partial_charge=False,
+        substruct_input=False,
+        pattern_path=None,
     ):
         """
         The main Dataset class for the project.
@@ -41,10 +43,15 @@ class MoleculeDataset(InMemoryDataset):
             prefilter (callable): the one-time filter for data preprocessing.
             dataset (str): name of the dataset.
             partial_charge (bool): use partial charge property.
+            substruct_input (bool): substructures of a molecule are used to generate a
+                single graph together with the whole molecule for input.
+            pattern_path (str): path to the csv file saving SMARTS patterns.
         """
         self.dataset = dataset
         self.root = root
         self.partial_charge = partial_charge
+        self.substruct_input = substruct_input
+        self.pattern_path = pattern_path
         super(MoleculeDataset, self).__init__(
             root, transform, pre_transform, pre_filter
         )
@@ -57,17 +64,26 @@ class MoleculeDataset(InMemoryDataset):
 
     @property
     def processed_file_names(self):
+        if self.substruct_input:
+            return "geometric_data_substruct_processed.pt"
         return "geometric_data_processed.pt"
 
     def download(self):
         pass
 
     def add_data_to_list(self, smiles, mols, labels, data_list, data_smiles_list):
+        """ Generate Data objects from smiles and add them into given data_list.
+        """
         for i in range(len(smiles)):
             rdkit_mol = mols[i]
             if rdkit_mol is None:
                 continue
-            data = mol_to_graph_data_obj_simple(rdkit_mol, self.partial_charge)
+            data = mol_to_graph_data_obj_simple(
+                rdkit_mol,
+                self.partial_charge,
+                self.substruct_input,
+                pattern_path=self.pattern_path,
+            )
             if data is None:
                 continue
             data.id = torch.tensor([i])
@@ -75,7 +91,6 @@ class MoleculeDataset(InMemoryDataset):
                 data.y = torch.tensor(labels[i, :])
             else:
                 data.y = torch.tensor([labels[i]])
-            data.substructs = get_substructs(rdkit_mol)
             data_list.append(data)
             data_smiles_list.append(smiles[i])
 
@@ -96,7 +111,9 @@ class MoleculeDataset(InMemoryDataset):
                 # add mol id
                 id = int(zinc_id_list[i].split("ZINC")[1].lstrip("0"))
                 data.id = torch.tensor([id])
-                data.substructs = get_substructs(rdkit_mol)
+                data.substructs = get_substructs(
+                    rdkit_mol, pattern_path=self.pattern_path
+                )
                 data_list.append(data)
                 data_smiles_list.append(smiles_list[i])
 
@@ -118,7 +135,9 @@ class MoleculeDataset(InMemoryDataset):
                         continue
                     # manually add mol id
                     data.id = torch.tensor([i])
-                    data.substructs = get_substructs(rdkit_mol)
+                    data.substructs = get_substructs(
+                        rdkit_mol, pattern_path=self.pattern_path
+                    )
                     # No matches patterns
                     if len(data.substructs) == 0:
                         continue
