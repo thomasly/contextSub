@@ -79,6 +79,35 @@ def split_rdkit_mol_obj(mol):
     return mol_species_list
 
 
+def update_substruct(data, root_substruct, partial_charge, k):
+    """ Update substructures by adding contexts.
+
+    Args:
+        data (PyG Data object): the object to search context from.
+        substrcut (list): list of int, indices of atoms in the substructure.
+        mol (RDKit Mol)
+        parital_charge (bool): include partial charge property if True.
+        k (int): number of hops.
+
+    return:
+        substruct (list): updated substruct atom indices list with context atoms.
+        mask (list): mask vector indicating the central structure and context. 0 is
+            context, 1 is central substructure.
+    """
+    G = graph_data_obj_to_nx_simple(data, partial_charge)
+    # Get k-hop subgraph rooted at specified substruct
+    substruct_node_idxes = set()
+    for node in root_substruct:
+        new_idxes = nx.single_source_shortest_path_length(G, node, k).keys()
+        substruct_node_idxes = substruct_node_idxes.union(new_idxes)
+    substruct_node_idxes = list(substruct_node_idxes)
+    mask = torch.zeros((len(substruct_node_idxes), 1), dtype=torch.long)
+    for i, idx in enumerate(substruct_node_idxes):
+        if idx in root_substruct:
+            mask[i, 0] = 1
+    return substruct_node_idxes, mask
+
+
 def get_substruct_x(substruct, mol, partial_charge):
     atom_features_list = []
     for atom_idx in substruct:
@@ -144,7 +173,12 @@ def get_substruct_edge_attrs(substruct, mol, starting_idx=0):
 
 
 def mol_to_graph_data_obj_simple(
-    mol, partial_charge=False, substruct_input=False, pattern_path=None
+    mol,
+    partial_charge=False,
+    substruct_input=False,
+    pattern_path=None,
+    context=False,
+    hops=5,
 ):
     """
     Converts rdkit mol object to graph Data object required by the pytorch
@@ -155,7 +189,9 @@ def mol_to_graph_data_obj_simple(
         mol: rdkit mol object.
         partial_charge (bool): if to add atom partial charge as atom property.
         substruct_input (bool): add substructure nodes into data.x
-        patten_path (str): path to the csv file with PubChem SMARTS patterns
+        patten_path (str): path to the csv file with PubChem SMARTS patterns.
+        context (bool): substructs include context.
+        hops (int): number of hops of the context from central structure.
     Returns:
         graph data object with the attributes: x, edge_index, edge_attr
     """
@@ -206,10 +242,15 @@ def mol_to_graph_data_obj_simple(
     data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
     data.substructs = get_substructs(mol, pattern_path)
     starting_idx = len(list(mol.GetAtoms()))
+    if context:
+        data.mask = torch.ones((data.x.size(0), 1), dtype=torch.long)
     if substruct_input:
         for patterns in data.substructs:
             for substruct in patterns:
+                if context:
+                    substruct, mask = update_substruct(data, substruct, mol, hops)
                 substruct_x = get_substruct_x(substruct, mol, partial_charge)
+                data.mask = torch.cat([data.mask, mask], dim=0)
                 substruct_edge_list, substruct_edge_attrs = get_substruct_edge_attrs(
                     substruct, mol, starting_idx=starting_idx
                 )

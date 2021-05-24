@@ -31,6 +31,8 @@ class MoleculeDataset(InMemoryDataset):
         partial_charge=False,
         substruct_input=False,
         pattern_path=None,
+        context=False,
+        hops=5,
     ):
         """
         The main Dataset class for the project.
@@ -46,12 +48,16 @@ class MoleculeDataset(InMemoryDataset):
             substruct_input (bool): substructures of a molecule are used to generate a
                 single graph together with the whole molecule for input.
             pattern_path (str): path to the csv file saving SMARTS patterns.
+            context (bool): substructs include context.
+            hops (int): number of hops of the context from central structure.
         """
         self.dataset = dataset
         self.root = root
         self.partial_charge = partial_charge
         self.substruct_input = substruct_input
         self.pattern_path = pattern_path
+        self.context = context
+        self.hops = hops
         super(MoleculeDataset, self).__init__(
             root, transform, pre_transform, pre_filter
         )
@@ -65,7 +71,10 @@ class MoleculeDataset(InMemoryDataset):
     @property
     def processed_file_names(self):
         if self.substruct_input:
-            return "geometric_data_substruct_processed.pt"
+            if self.context:
+                return "geometric_data_substruct_context_processed.pt"
+            else:
+                return "geometric_data_substruct_processed.pt"
         return "geometric_data_processed.pt"
 
     def download(self):
@@ -83,6 +92,8 @@ class MoleculeDataset(InMemoryDataset):
                 self.partial_charge,
                 self.substruct_input,
                 pattern_path=self.pattern_path,
+                context=self.context,
+                hops=self.hops,
             )
             if data is None:
                 continue
