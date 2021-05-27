@@ -25,13 +25,23 @@ def train(args, model, device, loader, optimizer):
 
     for _, batch in enumerate(tqdm(loader, desc="Iteration")):
         batch = batch.to(device)
-        pred = model(
-            batch.x,
-            batch.edge_index,
-            batch.edge_attr,
-            batch.batch,
-            batch.to_data_list(),
-        )
+        if model.context:
+            pred = model(
+                batch.x,
+                batch.edge_index,
+                batch.edge_attr,
+                batch.batch,
+                batch.to_data_list(),
+                batch.mask,
+            )
+        else:
+            pred = model(
+                batch.x,
+                batch.edge_index,
+                batch.edge_attr,
+                batch.batch,
+                batch.to_data_list(),
+            )
         y = batch.y.view(pred.shape).to(torch.float64)
 
         # Whether y is non-null or not.
@@ -202,6 +212,9 @@ def main():
         action="store_true",
         help="Input graphs contain substructure information. For fine-tune only.",
     )
+    parser.add_argument(
+        "--context", action="store_true", help="The input is in context format"
+    )
     args = parser.parse_args()
 
     torch.manual_seed(args.runseed)
@@ -251,6 +264,8 @@ def main():
         partial_charge=args.partial_charge,
         substruct_input=args.sub_input,
         pattern_path=pattern_path,
+        context=args.context,
+        hops=args.num_layer,
     )
 
     print(dataset)

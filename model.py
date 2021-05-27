@@ -403,6 +403,7 @@ class GNN_graphpred(torch.nn.Module):
         node_feat_dim=None,
         edge_feat_dim=None,
         sub_level=False,
+        context=False,
     ):
         super(GNN_graphpred, self).__init__()
         self.num_layer = num_layer
@@ -413,6 +414,7 @@ class GNN_graphpred(torch.nn.Module):
         self.partial_charge = partial_charge
         self.input_mlp = input_mlp
         self.sub_level = sub_level
+        self.context = context
 
         if self.num_layer < 2:
             raise ValueError("Number of GNN layers must be greater than 1.")
@@ -516,7 +518,7 @@ class GNN_graphpred(torch.nn.Module):
             k += 1
         return sub_embs, sub_batch, emb_batch
 
-    def forward(self, x, edge_index, edge_attr, batch, data_list=[]):
+    def forward(self, x, edge_index, edge_attr, batch, data_list=[], mask=None):
         """ data_list is the original data forming the batch with substructs
         information.
         """
@@ -524,8 +526,14 @@ class GNN_graphpred(torch.nn.Module):
         if not self.sub_level:
             return self.graph_pred_linear(self.pool(node_representation, batch))
         else:
-            sub_embs, sub_batch, emb_batch = self.sub_pool(
-                node_representation, data_list
-            )
-            pooled = self.pool(self.pool(sub_embs, sub_batch), emb_batch)
-            return self.graph_pred_linear(pooled.to(x.device))
+            if not self.context:
+                sub_embs, sub_batch, emb_batch = self.sub_pool(
+                    node_representation, data_list
+                )
+                pooled = self.pool(self.pool(sub_embs, sub_batch), emb_batch)
+                return self.graph_pred_linear(pooled.to(x.device))
+            else:
+                mask = mask.to(torch.bool)
+                return self.graph_pred_linear(
+                    self.pool(node_representation[mask], batch[mask])
+                )
