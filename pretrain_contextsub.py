@@ -305,6 +305,12 @@ def main():
     parser.add_argument(
         "--edge_feat_dim", type=int, default=2, help="dimension of the edge features"
     )
+    parser.add_argument(
+        "--pattern_path",
+        type=str,
+        default="contextSub/resources/pubchemFPKeys_to_SMARTSpattern.csv",
+        help="path to the csv file saves substructure patterns.",
+    )
     args = parser.parse_args()
 
     torch.manual_seed(0)
@@ -331,6 +337,7 @@ def main():
             args.num_layer, l1, l2, partial_charge=args.partial_charge
         ),
         partial_charge=args.partial_charge,
+        pattern_path=args.pattern_path,
     )
     loader = DataLoaderPubchemContext(
         dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers

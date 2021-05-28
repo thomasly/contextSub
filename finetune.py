@@ -25,7 +25,23 @@ def train(args, model, device, loader, optimizer):
 
     for _, batch in enumerate(tqdm(loader, desc="Iteration")):
         batch = batch.to(device)
-        pred = model(batch.x, batch.edge_index, batch.edge_attr, batch.batch)
+        if model.context:
+            pred = model(
+                batch.x,
+                batch.edge_index,
+                batch.edge_attr,
+                batch.batch,
+                batch.to_data_list(),
+                batch.mask,
+            )
+        else:
+            pred = model(
+                batch.x,
+                batch.edge_index,
+                batch.edge_attr,
+                batch.batch,
+                batch.to_data_list(),
+            )
         y = batch.y.view(pred.shape).to(torch.float64)
 
         # Whether y is non-null or not.
@@ -55,7 +71,13 @@ def eval(args, model, device, loader):
         batch = batch.to(device)
 
         with torch.no_grad():
-            pred = model(batch.x, batch.edge_index, batch.edge_attr, batch.batch)
+            pred = model(
+                batch.x,
+                batch.edge_index,
+                batch.edge_attr,
+                batch.batch,
+                batch.to_data_list(),
+            )
 
         y_true.append(batch.y.view(pred.shape))
         y_scores.append(pred)
@@ -179,6 +201,20 @@ def main():
         action="store_true",
         help="to use partial charge atom property",
     )
+    parser.add_argument(
+        "--sub_level",
+        action="store_true",
+        help="GNN_graphpred model output substructure based embeddings and the model is"
+        " fine-tuned based on that embedding.",
+    )
+    parser.add_argument(
+        "--sub_input",
+        action="store_true",
+        help="Input graphs contain substructure information. For fine-tune only.",
+    )
+    parser.add_argument(
+        "--context", action="store_true", help="The input is in context format"
+    )
     args = parser.parse_args()
 
     torch.manual_seed(args.runseed)
@@ -214,10 +250,22 @@ def main():
         raise ValueError("Invalid dataset name.")
 
     # set up dataset
+    if args.sub_input:
+        pattern_path = os.path.join(
+            "contextSub", "resources", "pubchemFPKeys_to_SMARTSpattern.csv"
+        )
+    else:
+        pattern_path = os.path.join(
+            "contextSub", "resources", "pubchemFPKeys_to_SMARTSpattern_filtered.csv"
+        )
     dataset = MoleculeDataset(
         "contextSub/dataset/" + args.dataset,
         dataset=args.dataset,
         partial_charge=args.partial_charge,
+        substruct_input=args.sub_input,
+        pattern_path=pattern_path,
+        context=args.context,
+        hops=args.num_layer,
     )
 
     print(dataset)
@@ -293,6 +341,7 @@ def main():
         graph_pooling=args.graph_pooling,
         gnn_type=args.gnn_type,
         partial_charge=args.partial_charge,
+        sub_level=args.sub_level,
     )
     if not args.input_model_file == "":
         model.from_pretrained(args.input_model_file)
