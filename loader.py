@@ -11,6 +11,7 @@ from rdkit.Chem.rdMolDescriptors import GetMorganFingerprintAsBitVect
 from torch.utils import data
 from torch_geometric.data import Data
 from torch_geometric.data import InMemoryDataset
+from tqdm import tqdm
 
 from .util import (
     get_substructs,
@@ -83,7 +84,7 @@ class MoleculeDataset(InMemoryDataset):
     def add_data_to_list(self, smiles, mols, labels, data_list, data_smiles_list):
         """ Generate Data objects from smiles and add them into given data_list.
         """
-        for i in range(len(smiles)):
+        for i in tqdm(range(len(smiles))):
             rdkit_mol = mols[i]
             if rdkit_mol is None:
                 continue
@@ -172,33 +173,26 @@ class MoleculeDataset(InMemoryDataset):
         data_list = []
         if self.dataset == "zinc_standard_agent":
             self.load_zinc_standard_dataset(data_list, data_smiles_list)
-
         elif self.dataset == "chembl":
             self.load_chembl_dataset(data_list, data_smiles_list)
-
         elif self.dataset == "tox21":
             self.load_dataset(data_list, data_smiles_list, method=_load_tox21_dataset)
-
         elif self.dataset == "hiv":
             self.load_dataset(data_list, data_smiles_list, method=_load_hiv_dataset)
-
         elif self.dataset == "bace":
             self.load_dataset(data_list, data_smiles_list, method=_load_bace_dataset)
-
         elif self.dataset == "bbbp":
             self.load_dataset(data_list, data_smiles_list, method=_load_bbbp_dataset)
-
         elif self.dataset == "clintox":
             self.load_dataset(data_list, data_smiles_list, method=_load_clintox_dataset)
-
         elif self.dataset == "muv":
             self.load_dataset(data_list, data_smiles_list, method=_load_muv_dataset)
-
         elif self.dataset == "sider":
             self.load_dataset(data_list, data_smiles_list, method=_load_sider_dataset)
-
         elif self.dataset == "toxcast":
             self.load_dataset(data_list, data_smiles_list, method=_load_toxcast_dataset)
+        elif self.dataset == "evaluation":
+            self.load_dataset(data_list, data_smiles_list, method=_load_eval_dataset)
         else:
             raise ValueError("Invalid dataset name")
 
@@ -662,6 +656,29 @@ def _load_toxcast_dataset(input_path):
     assert len(smiles_list) == len(preprocessed_smiles_list)
     assert len(smiles_list) == len(labels)
     return preprocessed_smiles_list, preprocessed_rdkit_mol_objs_list, labels.values
+
+
+def _load_eval_dataset(input_path):
+    with open(input_path, "rb") as f:
+        mols = pickle.load(f)
+    smiles_list = []
+    rdkit_mol_objs_list = []
+    labels = []
+    for smiles, props in mols.items():
+        smiles_list.append(smiles)
+        rdkit_mol_objs_list.append(AllChem.MolFromSmiles(smiles))
+        labels.append([props["log_p"], props["mr"]])
+    preprocessed_rdkit_mol_objs_list = [
+        m if m is not None else None for m in rdkit_mol_objs_list
+    ]
+    preprocessed_smiles_list = [
+        AllChem.MolToSmiles(m) if m is not None else None
+        for m in preprocessed_rdkit_mol_objs_list
+    ]
+    assert len(smiles_list) == len(preprocessed_rdkit_mol_objs_list)
+    assert len(smiles_list) == len(preprocessed_smiles_list)
+    assert len(smiles_list) == len(labels)
+    return preprocessed_smiles_list, preprocessed_rdkit_mol_objs_list, np.array(labels)
 
 
 def _load_chembl_with_labels_dataset(root_path):
