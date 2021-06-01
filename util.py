@@ -172,49 +172,7 @@ def get_substruct_edge_attrs(substruct, mol, starting_idx=0):
     return edge_index, edge_attr
 
 
-def mol_to_graph_data_obj_simple(
-    mol,
-    partial_charge=False,
-    substruct_input=False,
-    pattern_path=None,
-    context=False,
-    hops=5,
-):
-    """
-    Converts rdkit mol object to graph Data object required by the pytorch
-    geometric package. NB: Uses simplified atom and bond features, and represent
-    as indices.
-
-    Args:
-        mol: rdkit mol object.
-        partial_charge (bool): if to add atom partial charge as atom property.
-        substruct_input (bool): add substructure nodes into data.x
-        patten_path (str): path to the csv file with PubChem SMARTS patterns.
-        context (bool): substructs include context.
-        hops (int): number of hops of the context from central structure.
-    Returns:
-        graph data object with the attributes: x, edge_index, edge_attr
-    """
-    # atoms, num_atom_features = 2
-    atom_features_list = []
-    if partial_charge:
-        rdPartialCharges.ComputeGasteigerCharges(mol)
-        for atom in mol.GetAtoms():
-            if np.isnan(atom.GetDoubleProp("_GasteigerCharge")):
-                return
-    for atom in mol.GetAtoms():
-        atom_feature = [
-            allowable_features["possible_atomic_num_list"].index(atom.GetAtomicNum())
-        ] + [allowable_features["possible_chirality_list"].index(atom.GetChiralTag())]
-        if partial_charge:
-            atom_feature += [atom.GetDoubleProp("_GasteigerCharge")]
-        atom_features_list.append(atom_feature)
-    if partial_charge:
-        x = torch.tensor(np.array(atom_features_list), dtype=torch.float)
-    else:
-        x = torch.tensor(np.array(atom_features_list), dtype=torch.long)
-
-    # bonds
+def get_edge_attrs(mol):
     num_bond_features = 2  # bond type, bond direction
     if len(mol.GetBonds()) > 0:  # mol has bonds
         edges_list = []
@@ -238,26 +196,94 @@ def mol_to_graph_data_obj_simple(
     else:  # mol has no bonds
         edge_index = torch.empty((2, 0), dtype=torch.long)
         edge_attr = torch.empty((0, num_bond_features), dtype=torch.long)
+    return edge_index, edge_attr
+
+
+def get_substruct_input_data(
+    data, context, mol, hops, pooling_indicator, partial_charge, starting_idx
+):
+    for i, patterns in enumerate(data.substructs):
+        for substruct in patterns:
+            if context:
+                substruct, mask = update_substruct(data, substruct, mol, hops)
+                data.mask = torch.cat([data.mask, mask], dim=0)
+                if pooling_indicator:
+                    data.pooling_indicator = torch.cat(
+                        [
+                            data.pooling_indicator,
+                            torch.ones((mask.size(0), 1), dtype=torch.long) * (i + 1),
+                        ],
+                        dim=0,
+                    )
+            substruct_x = get_substruct_x(substruct, mol, partial_charge)
+            substruct_edge_list, substruct_edge_attrs = get_substruct_edge_attrs(
+                substruct, mol, starting_idx=starting_idx
+            )
+            data.x = torch.cat([data.x, substruct_x], 0)
+            data.edge_index = torch.cat([data.edge_index, substruct_edge_list], 1)
+            data.edge_attr = torch.cat([data.edge_attr, substruct_edge_attrs], 0)
+            starting_idx += len(substruct)
+
+
+def mol_to_graph_data_obj_simple(
+    mol,
+    partial_charge=False,
+    substruct_input=False,
+    pattern_path=None,
+    mask=False,
+    hops=5,
+    pooling_indicator=False,
+):
+    """
+    Converts rdkit mol object to graph Data object required by the pytorch
+    geometric package. NB: Uses simplified atom and bond features, and represent
+    as indices.
+
+    Args:
+        mol: rdkit mol object.
+        partial_charge (bool): if to add atom partial charge as atom property.
+        substruct_input (bool): add substructure nodes into data.x
+        patten_path (str): path to the csv file with PubChem SMARTS patterns.
+        context (bool): substructs include context.
+        hops (int): number of hops of the context from central structure.
+        pooling_indicator (bool): include pooling indicator (to calculate pooling
+            for substructures) in the Data object.
+    Returns:
+        graph data object with the attributes: x, edge_index, edge_attr
+    """
+    # atoms, num_atom_features = 2
+    atom_features_list = []
+    if partial_charge:
+        rdPartialCharges.ComputeGasteigerCharges(mol)
+        for atom in mol.GetAtoms():
+            if np.isnan(atom.GetDoubleProp("_GasteigerCharge")):
+                return
+    for atom in mol.GetAtoms():
+        atom_feature = [
+            allowable_features["possible_atomic_num_list"].index(atom.GetAtomicNum())
+        ] + [allowable_features["possible_chirality_list"].index(atom.GetChiralTag())]
+        if partial_charge:
+            atom_feature += [atom.GetDoubleProp("_GasteigerCharge")]
+        atom_features_list.append(atom_feature)
+    if partial_charge:
+        x = torch.tensor(np.array(atom_features_list), dtype=torch.float)
+    else:
+        x = torch.tensor(np.array(atom_features_list), dtype=torch.long)
+
+    # bonds
+    edge_index, edge_attr = get_edge_attrs(mol)
 
     data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
     data.substructs = get_substructs(mol, pattern_path)
     starting_idx = len(list(mol.GetAtoms()))
-    if context:
+    if mask:
         data.mask = torch.ones((data.x.size(0), 1), dtype=torch.long)
+        if pooling_indicator:
+            data.pooling_indicator = torch.zeros((data.x.size(0), 1), dtype=torch.long)
     if substruct_input:
-        for patterns in data.substructs:
-            for substruct in patterns:
-                if context:
-                    substruct, mask = update_substruct(data, substruct, mol, hops)
-                substruct_x = get_substruct_x(substruct, mol, partial_charge)
-                data.mask = torch.cat([data.mask, mask], dim=0)
-                substruct_edge_list, substruct_edge_attrs = get_substruct_edge_attrs(
-                    substruct, mol, starting_idx=starting_idx
-                )
-                data.x = torch.cat([data.x, substruct_x], 0)
-                data.edge_index = torch.cat([data.edge_index, substruct_edge_list], 1)
-                data.edge_attr = torch.cat([data.edge_attr, substruct_edge_attrs], 0)
-                starting_idx += len(substruct)
+        get_substruct_input_data(
+            data, mask, mol, hops, pooling_indicator, partial_charge, starting_idx
+        )
     return data
 
 
