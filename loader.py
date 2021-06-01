@@ -34,6 +34,7 @@ class MoleculeDataset(InMemoryDataset):
         pattern_path=None,
         context=False,
         hops=5,
+        pooling_indicator=False,
     ):
         """
         The main Dataset class for the project.
@@ -51,6 +52,8 @@ class MoleculeDataset(InMemoryDataset):
             pattern_path (str): path to the csv file saving SMARTS patterns.
             context (bool): substructs include context.
             hops (int): number of hops of the context from central structure.
+            pooling_indicator (bool): include pooling indicator (to calculate pooling
+                for substructures) in the Data object.
         """
         self.dataset = dataset
         self.root = root
@@ -59,6 +62,7 @@ class MoleculeDataset(InMemoryDataset):
         self.pattern_path = pattern_path
         self.context = context
         self.hops = hops
+        self.pooling_indecator = pooling_indicator
         super(MoleculeDataset, self).__init__(
             root, transform, pre_transform, pre_filter
         )
@@ -73,7 +77,10 @@ class MoleculeDataset(InMemoryDataset):
     def processed_file_names(self):
         if self.substruct_input:
             if self.context:
-                return "geometric_data_substruct_context_processed.pt"
+                if self.pooling_indecator:
+                    return "geometric_data_substruct_indicator_processed.pt"
+                else:
+                    return "geometric_data_substruct_context_processed.pt"
             else:
                 return "geometric_data_substruct_processed.pt"
         return "geometric_data_processed.pt"
@@ -95,6 +102,7 @@ class MoleculeDataset(InMemoryDataset):
                 pattern_path=self.pattern_path,
                 context=self.context,
                 hops=self.hops,
+                pooling_indicator=self.pooling_indecator,
             )
             if data is None:
                 continue
