@@ -230,7 +230,7 @@ def mol_to_graph_data_obj_simple(
     partial_charge=False,
     substruct_input=False,
     pattern_path=None,
-    context=False,
+    mask=False,
     hops=5,
     pooling_indicator=False,
 ):
@@ -276,13 +276,13 @@ def mol_to_graph_data_obj_simple(
     data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
     data.substructs = get_substructs(mol, pattern_path)
     starting_idx = len(list(mol.GetAtoms()))
-    if context:
+    if mask:
         data.mask = torch.ones((data.x.size(0), 1), dtype=torch.long)
         if pooling_indicator:
             data.pooling_indicator = torch.zeros((data.x.size(0), 1), dtype=torch.long)
     if substruct_input:
         get_substruct_input_data(
-            data, context, mol, hops, pooling_indicator, partial_charge, starting_idx
+            data, mask, mol, hops, pooling_indicator, partial_charge, starting_idx
         )
     return data
 

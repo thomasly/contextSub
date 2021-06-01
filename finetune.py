@@ -15,6 +15,7 @@ import pandas as pd
 from .model import GNN_graphpred
 from .loader import MoleculeDataset
 from .splitters import scaffold_split, random_split, random_scaffold_split
+from .dataloader import DataLoaderPooling
 
 
 criterion = nn.BCEWithLogitsLoss(reduction="none")
@@ -25,23 +26,7 @@ def train(args, model, device, loader, optimizer):
 
     for _, batch in enumerate(tqdm(loader, desc="Iteration")):
         batch = batch.to(device)
-        if model.context:
-            pred = model(
-                batch.x,
-                batch.edge_index,
-                batch.edge_attr,
-                batch.batch,
-                batch.to_data_list(),
-                batch.mask,
-            )
-        else:
-            pred = model(
-                batch.x,
-                batch.edge_index,
-                batch.edge_attr,
-                batch.batch,
-                batch.to_data_list(),
-            )
+        pred = model(batch)
         y = batch.y.view(pred.shape).to(torch.float64)
 
         # Whether y is non-null or not.
@@ -71,13 +56,7 @@ def eval(args, model, device, loader):
         batch = batch.to(device)
 
         with torch.no_grad():
-            pred = model(
-                batch.x,
-                batch.edge_index,
-                batch.edge_attr,
-                batch.batch,
-                batch.to_data_list(),
-            )
+            pred = model(batch)
 
         y_true.append(batch.y.view(pred.shape))
         y_scores.append(pred)
@@ -215,6 +194,11 @@ def main():
     parser.add_argument(
         "--context", action="store_true", help="The input is in context format"
     )
+    parser.add_argument(
+        "--pooling_indicator",
+        action="store_true",
+        help="data includes pooling indicator attribute",
+    )
     args = parser.parse_args()
 
     torch.manual_seed(args.runseed)
@@ -250,14 +234,17 @@ def main():
         raise ValueError("Invalid dataset name.")
 
     # set up dataset
-    if args.sub_input:
-        pattern_path = os.path.join(
-            "contextSub", "resources", "pubchemFPKeys_to_SMARTSpattern.csv"
-        )
-    else:
-        pattern_path = os.path.join(
-            "contextSub", "resources", "pubchemFPKeys_to_SMARTSpattern_filtered.csv"
-        )
+    # if args.sub_input:
+    #     pattern_path = os.path.join(
+    #         "contextSub", "resources", "pubchemFPKeys_to_SMARTSpattern.csv"
+    #     )
+    # else:
+    #     pattern_path = os.path.join(
+    #         "contextSub", "resources", "pubchemFPKeys_to_SMARTSpattern_filtered.csv"
+    #     )
+    pattern_path = os.path.join(
+        "contextSub", "resources", "pubchemFPKeys_to_SMARTSpattern_filtered.csv"
+    )
     dataset = MoleculeDataset(
         "contextSub/dataset/" + args.dataset,
         dataset=args.dataset,
@@ -266,6 +253,7 @@ def main():
         pattern_path=pattern_path,
         context=args.context,
         hops=args.num_layer,
+        pooling_indicator=args.pooling_indicator,
     )
 
     print(dataset)
@@ -312,19 +300,23 @@ def main():
 
     print(train_dataset[0])
 
-    train_loader = DataLoader(
+    if args.pooling_indicator:
+        DataLoaderClass = DataLoaderPooling
+    else:
+        DataLoaderClass = DataLoader
+    train_loader = DataLoaderClass(
         train_dataset,
         batch_size=args.batch_size,
         shuffle=True,
         num_workers=args.num_workers,
     )
-    val_loader = DataLoader(
+    val_loader = DataLoaderClass(
         valid_dataset,
         batch_size=args.batch_size,
         shuffle=False,
         num_workers=args.num_workers,
     )
-    test_loader = DataLoader(
+    test_loader = DataLoaderClass(
         test_dataset,
         batch_size=args.batch_size,
         shuffle=False,
@@ -361,6 +353,7 @@ def main():
     )
     optimizer = optim.Adam(model_param_group, lr=args.lr, weight_decay=args.decay)
     print(optimizer)
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.1)
 
     train_acc_list = []
     val_acc_list = []
@@ -380,6 +373,7 @@ def main():
         print("====epoch " + str(epoch))
 
         train(args, model, device, train_loader, optimizer)
+        scheduler.step()
 
         print("====Evaluation")
         if args.eval_train:

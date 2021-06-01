@@ -403,7 +403,6 @@ class GNN_graphpred(torch.nn.Module):
         node_feat_dim=None,
         edge_feat_dim=None,
         sub_level=False,
-        context=False,
     ):
         super(GNN_graphpred, self).__init__()
         self.num_layer = num_layer
@@ -414,7 +413,6 @@ class GNN_graphpred(torch.nn.Module):
         self.partial_charge = partial_charge
         self.input_mlp = input_mlp
         self.sub_level = sub_level
-        self.context = context
 
         if self.num_layer < 2:
             raise ValueError("Number of GNN layers must be greater than 1.")
@@ -485,55 +483,26 @@ class GNN_graphpred(torch.nn.Module):
                 flag = b.cpu().detach().item()
         return counts
 
-    def sub_pool(self, node_presentation, data_list):
-        total_len = 0
-        emb_len = 0
-        for data in data_list:
-            for patterns in data.substructs:
-                for substruct in patterns:
-                    emb_len += 1
-                    total_len += len(substruct)
-        sub_embs = torch.zeros(
-            (total_len, node_presentation.size(1)),
-            dtype=node_presentation.dtype,
-            device=node_presentation.device,
-        )
-        sub_batch = torch.zeros(
-            (total_len), dtype=torch.long, device=node_presentation.device
-        )
-        emb_batch = torch.zeros(
-            (emb_len), dtype=torch.long, device=node_presentation.device
-        )
-        n, i, j, k = 0, 0, 0, 0
-        for data in data_list:
-            for patterns in data.substructs:
-                for substruct in patterns:
-                    for atom_idx in substruct:
-                        sub_embs[i] = node_presentation[atom_idx + n]
-                        sub_batch[i] = j
-                        i += 1
-                    emb_batch[j] = k
-                    j += 1
-            n += data.x.size(0)
-            k += 1
-        return sub_embs, sub_batch, emb_batch
-
-    def forward(self, x, edge_index, edge_attr, batch, data_list=[], mask=None):
+    def forward(self, batch):
         """ data_list is the original data forming the batch with substructs
         information.
         """
-        node_representation = self.gnn(x, edge_index, edge_attr)
+        node_representation = self.gnn(batch.x, batch.edge_index, batch.edge_attr)
         if not self.sub_level:
-            return self.graph_pred_linear(self.pool(node_representation, batch))
+            # average node representations directly
+            return self.graph_pred_linear(self.pool(node_representation, batch.batch))
         else:
-            if not self.context:
-                sub_embs, sub_batch, emb_batch = self.sub_pool(
-                    node_representation, data_list
+            if hasattr(batch, "pooling_indicator"):
+                # average substructures first, then the whole molecule
+                mask = batch.mask.to(torch.bool).squeeze()
+                emb_repr = self.pool(
+                    node_representation[mask], batch.pooling_indicator[mask].squeeze(),
                 )
-                pooled = self.pool(self.pool(sub_embs, sub_batch), emb_batch)
-                return self.graph_pred_linear(pooled.to(x.device))
+                pooled = self.pool(emb_repr, batch.emb_indicator.squeeze())
+                return self.graph_pred_linear(pooled)
             else:
-                mask = mask.to(torch.bool)
+                # average the substructures by adding a mask
+                mask = batch.mask.to(torch.bool).squeeze()
                 return self.graph_pred_linear(
                     self.pool(node_representation[mask], batch[mask])
                 )

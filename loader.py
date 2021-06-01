@@ -100,7 +100,7 @@ class MoleculeDataset(InMemoryDataset):
                 self.partial_charge,
                 self.substruct_input,
                 pattern_path=self.pattern_path,
-                context=self.context,
+                mask=self.context,
                 hops=self.hops,
                 pooling_indicator=self.pooling_indecator,
             )

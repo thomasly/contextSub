@@ -4,7 +4,13 @@ import torch
 import torch.utils.data
 import networkx as nx
 
-from .batch import BatchSubstructContext, BatchPubchemContext, BatchMasking, BatchAE
+from .batch import (
+    BatchSubstructContext,
+    BatchPubchemContext,
+    BatchMasking,
+    BatchAE,
+    BatchPoolingIndicator,
+)
 from .util import graph_data_obj_to_nx_simple, nx_to_graph_data_obj_simple, reset_idxes
 
 
@@ -90,6 +96,19 @@ class DataLoaderAE(torch.utils.data.DataLoader):
             batch_size,
             shuffle,
             collate_fn=lambda data_list: BatchAE.from_data_list(data_list),
+            **kwargs
+        )
+
+
+class DataLoaderPooling(torch.utils.data.DataLoader):
+    def __init__(self, dataset, batch_size=1, shuffle=True, **kwargs):
+        super(DataLoaderPooling, self).__init__(
+            dataset,
+            batch_size,
+            shuffle,
+            collate_fn=lambda data_list: BatchPoolingIndicator.from_data_list(
+                data_list
+            ),
             **kwargs
         )
 
