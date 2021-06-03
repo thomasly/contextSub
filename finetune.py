@@ -12,7 +12,7 @@ from sklearn.metrics import roc_auc_score
 from tensorboardX import SummaryWriter
 import pandas as pd
 
-from .model import GNN_graphpred
+from .model import GNN_graphpred, ContextSubDouble
 from .loader import MoleculeDataset
 from .splitters import scaffold_split, random_split, random_scaffold_split
 from .dataloader import DataLoaderPooling
@@ -167,7 +167,7 @@ def main():
         help="random or scaffold or random_scaffold",
     )
     parser.add_argument(
-        "--eval_train", type=int, default=0, help="evaluating training or not"
+        "--eval_train", action="store_true", help="evaluating training or not"
     )
     parser.add_argument(
         "--num_workers",
@@ -198,6 +198,23 @@ def main():
         "--pooling_indicator",
         action="store_true",
         help="data includes pooling indicator attribute",
+    )
+    parser.add_argument(
+        "--separate_output",
+        action="store_true",
+        help="Separate the molecule embedding and substructrue embedding before feeding"
+        " into the MLP classifier.",
+    )
+    parser.add_argument(
+        "--contextpred",
+        action="store_true",
+        help="Use pretrained weights from contextPred to compute molecule level "
+        "embedding, and use contextSub to compute substructure level embeddings.",
+    )
+    parser.add_argument(
+        "--contextpred_model_file",
+        type=str,
+        help="Path to the pretrained contextPred weights file.",
     )
     args = parser.parse_args()
 
@@ -324,26 +341,44 @@ def main():
     )
 
     # set up model
-    model = GNN_graphpred(
-        args.num_layer,
-        args.emb_dim,
-        num_tasks,
-        JK=args.JK,
-        drop_ratio=args.dropout_ratio,
-        graph_pooling=args.graph_pooling,
-        gnn_type=args.gnn_type,
-        partial_charge=args.partial_charge,
-        sub_level=args.sub_level,
-    )
-    if not args.input_model_file == "":
-        model.from_pretrained(args.input_model_file)
+    if args.contextpred:
+        model = ContextSubDouble(
+            args.num_layer,
+            args.emb_dim,
+            num_tasks,
+            JK=args.JK,
+            drop_ratio=args.dropout_ratio,
+            graph_pooling=args.graph_pooling,
+            gnn_type=args.gnn_type,
+            partial_charge=args.partial_charge,
+        )
+        model.from_pretrained(args.contextpred_model_file, args.input_model_file)
+    else:
+        model = GNN_graphpred(
+            args.num_layer,
+            args.emb_dim,
+            num_tasks,
+            JK=args.JK,
+            drop_ratio=args.dropout_ratio,
+            graph_pooling=args.graph_pooling,
+            gnn_type=args.gnn_type,
+            partial_charge=args.partial_charge,
+            sub_level=args.sub_level,
+            separate=args.separate_output,
+        )
+        if not args.input_model_file == "":
+            model.from_pretrained(args.input_model_file)
 
     model.to(device)
 
     # set up optimizer
     # different learning rate for different part of GNN
     model_param_group = []
-    model_param_group.append({"params": model.gnn.parameters()})
+    if args.contextpred:
+        model_param_group.append({"params": model.gnn1.parameters()})
+        model_param_group.append({"params": model.gnn2.parameters()})
+    else:
+        model_param_group.append({"params": model.gnn.parameters()})
     if args.graph_pooling == "attention":
         model_param_group.append(
             {"params": model.pool.parameters(), "lr": args.lr * args.lr_scale}
@@ -353,7 +388,7 @@ def main():
     )
     optimizer = optim.Adam(model_param_group, lr=args.lr, weight_decay=args.decay)
     print(optimizer)
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.1)
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
 
     train_acc_list = []
     val_acc_list = []
