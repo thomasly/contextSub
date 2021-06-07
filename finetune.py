@@ -21,7 +21,7 @@ from .dataloader import DataLoaderPooling
 criterion = nn.BCEWithLogitsLoss(reduction="none")
 
 
-def train(args, model, device, loader, optimizer):
+def train(args, model, device, loader, optimizers, schedulers, epoch=None):
     model.train()
 
     for _, batch in enumerate(tqdm(loader, desc="Iteration")):
@@ -39,12 +39,20 @@ def train(args, model, device, loader, optimizer):
             loss_mat,
             torch.zeros(loss_mat.shape).to(loss_mat.device).to(loss_mat.dtype),
         )
-
-        optimizer.zero_grad()
-        loss = torch.sum(loss_mat) / torch.sum(is_valid)
-        loss.backward()
-
-        optimizer.step()
+        if args.freeze and epoch < args.freeze:
+            optimizers[1].zero_grad()
+            loss = torch.sum(loss_mat) / torch.sum(is_valid)
+            loss.backward()
+            optimizers[1].step()
+        else:
+            [opt.zero_grad() for opt in optimizers]
+            loss = torch.sum(loss_mat) / torch.sum(is_valid)
+            loss.backward()
+            [opt.step() for opt in optimizers]
+    if args.freeze and epoch < args.freeze:
+        schedulers[1].step()
+    else:
+        [sch.step() for sch in schedulers]
 
 
 def eval(args, model, device, loader):
@@ -80,7 +88,7 @@ def eval(args, model, device, loader):
     return sum(roc_list) / len(roc_list)  # y_true.shape[1]
 
 
-def main():
+def parse_args():
     # Training settings
     parser = argparse.ArgumentParser(
         description="PyTorch implementation of pre-training of graph neural networks"
@@ -216,65 +224,42 @@ def main():
         type=str,
         help="Path to the pretrained contextPred weights file.",
     )
-    args = parser.parse_args()
-
-    torch.manual_seed(args.runseed)
-    np.random.seed(args.runseed)
-    device = (
-        torch.device("cuda:" + str(args.device))
-        if torch.cuda.is_available()
-        else torch.device("cpu")
+    parser.add_argument(
+        "--freeze",
+        type=int,
+        default=0,
+        help="Freeze the weigthts of GNN at the beggining of fine-tuning for n steps."
+        " Default is 0.",
     )
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(args.runseed)
+    args = parser.parse_args()
+    return args
 
-    # Bunch of classification tasks
-    if args.dataset == "tox21":
+
+def get_num_tasks(task):
+    if task == "tox21":
         num_tasks = 12
-    elif args.dataset == "hiv":
+    elif task == "hiv":
         num_tasks = 1
-    elif args.dataset == "pcba":
+    elif task == "pcba":
         num_tasks = 128
-    elif args.dataset == "muv":
+    elif task == "muv":
         num_tasks = 17
-    elif args.dataset == "bace":
+    elif task == "bace":
         num_tasks = 1
-    elif args.dataset == "bbbp":
+    elif task == "bbbp":
         num_tasks = 1
-    elif args.dataset == "toxcast":
+    elif task == "toxcast":
         num_tasks = 617
-    elif args.dataset == "sider":
+    elif task == "sider":
         num_tasks = 27
-    elif args.dataset == "clintox":
+    elif task == "clintox":
         num_tasks = 2
     else:
         raise ValueError("Invalid dataset name.")
+    return num_tasks
 
-    # set up dataset
-    # if args.sub_input:
-    #     pattern_path = os.path.join(
-    #         "contextSub", "resources", "pubchemFPKeys_to_SMARTSpattern.csv"
-    #     )
-    # else:
-    #     pattern_path = os.path.join(
-    #         "contextSub", "resources", "pubchemFPKeys_to_SMARTSpattern_filtered.csv"
-    #     )
-    pattern_path = os.path.join(
-        "contextSub", "resources", "pubchemFPKeys_to_SMARTSpattern_filtered.csv"
-    )
-    dataset = MoleculeDataset(
-        "contextSub/dataset/" + args.dataset,
-        dataset=args.dataset,
-        partial_charge=args.partial_charge,
-        substruct_input=args.sub_input,
-        pattern_path=pattern_path,
-        context=args.context,
-        hops=args.num_layer,
-        pooling_indicator=args.pooling_indicator,
-    )
 
-    print(dataset)
-
+def decide_split(dataset, args):
     if args.split == "scaffold":
         smiles_list = pd.read_csv(
             "contextSub/dataset/" + args.dataset + "/processed/smiles.csv", header=None
@@ -316,6 +301,50 @@ def main():
         raise ValueError("Invalid split option.")
 
     print(train_dataset[0])
+    return train_dataset, valid_dataset, test_dataset
+
+
+def main():
+    args = parse_args()
+
+    torch.manual_seed(args.runseed)
+    np.random.seed(args.runseed)
+    device = (
+        torch.device("cuda:" + str(args.device))
+        if torch.cuda.is_available()
+        else torch.device("cpu")
+    )
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.runseed)
+
+    # Bunch of classification tasks
+    num_tasks = get_num_tasks(args.dataset)
+
+    # set up dataset
+    # if args.sub_input:
+    #     pattern_path = os.path.join(
+    #         "contextSub", "resources", "pubchemFPKeys_to_SMARTSpattern.csv"
+    #     )
+    # else:
+    #     pattern_path = os.path.join(
+    #         "contextSub", "resources", "pubchemFPKeys_to_SMARTSpattern_filtered.csv"
+    #     )
+    pattern_path = os.path.join(
+        "contextSub", "resources", "pubchemFPKeys_to_SMARTSpattern_filtered.csv"
+    )
+    dataset = MoleculeDataset(
+        "contextSub/dataset/" + args.dataset,
+        dataset=args.dataset,
+        partial_charge=args.partial_charge,
+        substruct_input=args.sub_input,
+        pattern_path=pattern_path,
+        context=args.context,
+        hops=args.num_layer,
+        pooling_indicator=args.pooling_indicator,
+    )
+
+    print(dataset)
+    train_dataset, valid_dataset, test_dataset = decide_split(dataset, args)
 
     if args.pooling_indicator:
         DataLoaderClass = DataLoaderPooling
@@ -373,23 +402,36 @@ def main():
 
     # set up optimizer
     # different learning rate for different part of GNN
-    model_param_group = []
+    gnn_param_group = []
+    mlp_param_group = []
     if args.contextpred:
-        model_param_group.append({"params": model.gnn1.parameters()})
-        model_param_group.append({"params": model.gnn2.parameters()})
+        gnn_param_group.append({"params": model.gnn1.parameters()})
+        gnn_param_group.append({"params": model.gnn2.parameters()})
     else:
-        model_param_group.append({"params": model.gnn.parameters()})
+        gnn_param_group.append({"params": model.gnn.parameters()})
     if args.graph_pooling == "attention":
-        model_param_group.append(
+        gnn_param_group.append(
             {"params": model.pool.parameters(), "lr": args.lr * args.lr_scale}
         )
-    model_param_group.append(
-        {"params": model.graph_pred_linear.parameters(), "lr": args.lr * args.lr_scale}
-    )
-    optimizer = optim.Adam(model_param_group, lr=args.lr, weight_decay=args.decay)
-    print(optimizer)
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
+    mlp_param_group.append({"params": model.graph_pred_linear.parameters()})
 
+    if args.freeze:
+        gnn_optimizer = optim.Adam(gnn_param_group, lr=args.lr, weight_decay=args.decay)
+        mlp_optimizer = optim.Adam(mlp_param_group, lr=args.lr, weight_decay=args.decay)
+        gnn_lr_scheduler = optim.lr_scheduler.StepLR(
+            gnn_optimizer, step_size=20, gamma=0.1
+        )
+        mlp_lr_scheduler = optim.lr_scheduler.StepLR(
+            mlp_optimizer, step_size=20, gamma=0.1
+        )
+        print(gnn_optimizer)
+        print(mlp_optimizer)
+    else:
+        optimizer = optim.Adam(
+            gnn_param_group + mlp_param_group, lr=args.lr, weight_decay=args.decay
+        )
+        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
+        print(optimizer)
     train_acc_list = []
     val_acc_list = []
     test_acc_list = []
@@ -407,8 +449,18 @@ def main():
     for epoch in range(1, args.epochs + 1):
         print("====epoch " + str(epoch))
 
-        train(args, model, device, train_loader, optimizer)
-        scheduler.step()
+        if args.freeze:
+            train(
+                args,
+                model,
+                device,
+                train_loader,
+                [gnn_optimizer, mlp_optimizer],
+                [gnn_lr_scheduler, mlp_lr_scheduler],
+                epoch,
+            )
+        else:
+            train(args, model, device, train_loader, [optimizer], [scheduler])
 
         print("====Evaluation")
         if args.eval_train:
