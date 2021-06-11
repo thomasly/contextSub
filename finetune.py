@@ -254,51 +254,108 @@ def get_num_tasks(task):
         num_tasks = 27
     elif task == "clintox":
         num_tasks = 2
+    elif task == "lightbbb":
+        num_tasks = 1
     else:
         raise ValueError("Invalid dataset name.")
     return num_tasks
 
 
-def decide_split(dataset, args):
-    if args.split == "scaffold":
-        smiles_list = pd.read_csv(
-            "contextSub/dataset/" + args.dataset + "/processed/smiles.csv", header=None
-        )[0].tolist()
-        train_dataset, valid_dataset, test_dataset = scaffold_split(
-            dataset,
-            smiles_list,
-            null_value=0,
-            frac_train=0.8,
-            frac_valid=0.1,
-            frac_test=0.1,
+def decide_split(dataset, args, pattern_path):
+    if args.dataset == "lightbbb":
+        if args.split == "scaffold":
+            smiles_list = pd.read_csv(
+                "contextSub/dataset/" + args.dataset + "/processed/smiles.csv",
+                header=None,
+            )[0].tolist()
+            train_dataset, valid_dataset, _ = scaffold_split(
+                dataset,
+                smiles_list,
+                null_value=0,
+                frac_train=0.9,
+                frac_valid=0.1,
+                frac_test=0.0,
+            )
+            print("scaffold")
+        elif args.split == "random":
+            train_dataset, valid_dataset, _ = random_split(
+                dataset,
+                null_value=0,
+                frac_train=0.9,
+                frac_valid=0.1,
+                frac_test=0.0,
+                seed=args.seed,
+            )
+            print("random")
+        elif args.split == "random_scaffold":
+            smiles_list = pd.read_csv(
+                "contextSub/dataset/" + args.dataset + "/processed/smiles.csv",
+                header=None,
+            )[0].tolist()
+            train_dataset, valid_dataset, _ = random_scaffold_split(
+                dataset,
+                smiles_list,
+                null_value=0,
+                frac_train=0.9,
+                frac_valid=0.1,
+                frac_test=0.0,
+                seed=args.seed,
+            )
+            print("random scaffold")
+        else:
+            raise ValueError("Invalid split option.")
+        test_dataset = MoleculeDataset(
+            "contextSub/dataset/lightbbb_test",
+            dataset="lightbbb_test",
+            partial_charge=args.partial_charge,
+            substruct_input=args.sub_input,
+            pattern_path=pattern_path,
+            context=args.context,
+            hops=args.num_layer,
+            pooling_indicator=args.pooling_indicator,
         )
-        print("scaffold")
-    elif args.split == "random":
-        train_dataset, valid_dataset, test_dataset = random_split(
-            dataset,
-            null_value=0,
-            frac_train=0.8,
-            frac_valid=0.1,
-            frac_test=0.1,
-            seed=args.seed,
-        )
-        print("random")
-    elif args.split == "random_scaffold":
-        smiles_list = pd.read_csv(
-            "contextSub/dataset/" + args.dataset + "/processed/smiles.csv", header=None
-        )[0].tolist()
-        train_dataset, valid_dataset, test_dataset = random_scaffold_split(
-            dataset,
-            smiles_list,
-            null_value=0,
-            frac_train=0.8,
-            frac_valid=0.1,
-            frac_test=0.1,
-            seed=args.seed,
-        )
-        print("random scaffold")
     else:
-        raise ValueError("Invalid split option.")
+        if args.split == "scaffold":
+            smiles_list = pd.read_csv(
+                "contextSub/dataset/" + args.dataset + "/processed/smiles.csv",
+                header=None,
+            )[0].tolist()
+            train_dataset, valid_dataset, test_dataset = scaffold_split(
+                dataset,
+                smiles_list,
+                null_value=0,
+                frac_train=0.8,
+                frac_valid=0.1,
+                frac_test=0.1,
+            )
+            print("scaffold")
+        elif args.split == "random":
+            train_dataset, valid_dataset, test_dataset = random_split(
+                dataset,
+                null_value=0,
+                frac_train=0.8,
+                frac_valid=0.1,
+                frac_test=0.1,
+                seed=args.seed,
+            )
+            print("random")
+        elif args.split == "random_scaffold":
+            smiles_list = pd.read_csv(
+                "contextSub/dataset/" + args.dataset + "/processed/smiles.csv",
+                header=None,
+            )[0].tolist()
+            train_dataset, valid_dataset, test_dataset = random_scaffold_split(
+                dataset,
+                smiles_list,
+                null_value=0,
+                frac_train=0.8,
+                frac_valid=0.1,
+                frac_test=0.1,
+                seed=args.seed,
+            )
+            print("random scaffold")
+        else:
+            raise ValueError("Invalid split option.")
 
     print(train_dataset[0])
     return train_dataset, valid_dataset, test_dataset
@@ -344,7 +401,9 @@ def main():
     )
 
     print(dataset)
-    train_dataset, valid_dataset, test_dataset = decide_split(dataset, args)
+    train_dataset, valid_dataset, test_dataset = decide_split(
+        dataset, args, pattern_path
+    )
 
     if args.pooling_indicator:
         DataLoaderClass = DataLoaderPooling

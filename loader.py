@@ -199,6 +199,14 @@ class MoleculeDataset(InMemoryDataset):
             self.load_dataset(data_list, data_smiles_list, method=_load_sider_dataset)
         elif self.dataset == "toxcast":
             self.load_dataset(data_list, data_smiles_list, method=_load_toxcast_dataset)
+        elif self.dataset == "lightbbb":
+            self.load_dataset(
+                data_list, data_smiles_list, method=_load_lightbbb_dataset
+            )
+        elif self.dataset == "lightbbb_test":
+            self.load_dataset(
+                data_list, data_smiles_list, method=_load_lightbbb_testset
+            )
         elif self.dataset == "evaluation":
             self.load_dataset(data_list, data_smiles_list, method=_load_eval_dataset)
         else:
@@ -220,8 +228,6 @@ class MoleculeDataset(InMemoryDataset):
         torch.save((data, slices), self.processed_paths[0])
 
 
-# NB: only properly tested when dataset_1 is chembl_with_labels and dataset_2
-# is pcba_pretrain
 def merge_dataset_objs(dataset_1, dataset_2):
     """
     Naively merge 2 molecule dataset objects, and ignore identities of
@@ -664,6 +670,38 @@ def _load_toxcast_dataset(input_path):
     assert len(smiles_list) == len(preprocessed_smiles_list)
     assert len(smiles_list) == len(labels)
     return preprocessed_smiles_list, preprocessed_rdkit_mol_objs_list, labels.values
+
+
+def _load_lightbbb_dataset(input_path):
+    input_df = pd.read_csv(input_path)
+    smiles_list = input_df["smiles"]
+    rdkit_mol_objs_list = [AllChem.MolFromSmiles(s) for s in smiles_list]
+    preprocessed_smiles_list = [
+        AllChem.MolToSmiles(m) if m is not None else None for m in rdkit_mol_objs_list
+    ]
+    labels = input_df["BBclass"]
+    # convert 0 to -1
+    labels = labels.replace(0, -1)
+    assert len(smiles_list) == len(rdkit_mol_objs_list)
+    assert len(smiles_list) == len(preprocessed_smiles_list)
+    assert len(smiles_list) == len(labels)
+    return preprocessed_smiles_list, rdkit_mol_objs_list, labels.values
+
+
+def _load_lightbbb_testset(input_path):
+    input_df = pd.read_csv(input_path)
+    smiles_list = input_df["smiles"]
+    rdkit_mol_objs_list = [AllChem.MolFromSmiles(s) for s in smiles_list]
+    preprocessed_smiles_list = [
+        AllChem.MolToSmiles(m) if m is not None else None for m in rdkit_mol_objs_list
+    ]
+    labels = input_df["BBclass"]
+    # convert 0 to -1
+    labels = labels.replace(0, -1)
+    assert len(smiles_list) == len(rdkit_mol_objs_list)
+    assert len(smiles_list) == len(preprocessed_smiles_list)
+    assert len(smiles_list) == len(labels)
+    return preprocessed_smiles_list, rdkit_mol_objs_list, labels.values
 
 
 def _load_eval_dataset(input_path):
