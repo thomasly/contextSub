@@ -83,7 +83,10 @@ class MoleculeDataset(InMemoryDataset):
                     return "geometric_data_substruct_context_processed.pt"
             else:
                 return "geometric_data_substruct_processed.pt"
-        return "geometric_data_processed.pt"
+        elif self.partial_charge:
+            return "geometric_data_processed_partialcharge.pt"
+        else:
+            return "geometric_data_processed.pt"
 
     def download(self):
         pass

@@ -39,18 +39,54 @@ def train(args, model, device, loader, optimizers, schedulers, epoch=None):
             loss_mat,
             torch.zeros(loss_mat.shape).to(loss_mat.device).to(loss_mat.dtype),
         )
-        if args.freeze and epoch < args.freeze:
-            optimizers[1].zero_grad()
-            loss = torch.sum(loss_mat) / torch.sum(is_valid)
-            loss.backward()
-            optimizers[1].step()
+        if args.freeze:
+            if args.two_step_freeze:
+                if epoch < args.freeze:
+                    optimizers[2].zero_grad()
+                    loss = torch.sum(loss_mat) / torch.sum(is_valid)
+                    loss.backward()
+                    optimizers[2].step()
+                elif args.freeze <= epoch < 2 * args.freeze:
+                    [opt.zero_grad() for opt in optimizers[1:]]
+                    loss = torch.sum(loss_mat) / torch.sum(is_valid)
+                    loss.backward()
+                    [opt.step() for opt in [optimizers[0], optimizers[2]]]
+                else:
+                    [opt.zero_grad() for opt in optimizers]
+                    loss = torch.sum(loss_mat) / torch.sum(is_valid)
+                    loss.backward()
+                    [opt.step() for opt in optimizers]
+            else:
+                if epoch < args.freeze:
+                    optimizers[1].zero_grad()
+                    loss = torch.sum(loss_mat) / torch.sum(is_valid)
+                    loss.backward()
+                    optimizers[1].step()
+                else:
+                    [opt.zero_grad() for opt in optimizers]
+                    loss = torch.sum(loss_mat) / torch.sum(is_valid)
+                    loss.backward()
+                    [opt.step() for opt in optimizers]
         else:
             [opt.zero_grad() for opt in optimizers]
             loss = torch.sum(loss_mat) / torch.sum(is_valid)
             loss.backward()
             [opt.step() for opt in optimizers]
-    if args.freeze and epoch < args.freeze:
-        schedulers[1].step()
+
+    # update lr after the whole epoch is done
+    if args.freeze:
+        if args.two_step_freeze:
+            if epoch < args.freeze:
+                schedulers[2].step()
+            elif args.freeze <= epoch < 2 * args.freeze:
+                [sch.step() for sch in [schedulers[0], schedulers[2]]]
+            else:
+                [sch.step() for sch in schedulers]
+        else:
+            if epoch < args.freeze:
+                schedulers[1].step()
+            else:
+                [sch.step() for sch in schedulers]
     else:
         [sch.step() for sch in schedulers]
 
@@ -230,6 +266,11 @@ def parse_args():
         default=0,
         help="Freeze the weigthts of GNN at the beggining of fine-tuning for n steps."
         " Default is 0.",
+    )
+    parser.add_argument(
+        "--two_step_freeze",
+        action="store_true",
+        help="Use 2-step freezing strategy to fine-tune the model.",
     )
     args = parser.parse_args()
     return args
@@ -475,17 +516,50 @@ def main():
     mlp_param_group.append({"params": model.graph_pred_linear.parameters()})
 
     if args.freeze:
-        gnn_optimizer = optim.Adam(gnn_param_group, lr=args.lr, weight_decay=args.decay)
-        mlp_optimizer = optim.Adam(mlp_param_group, lr=args.lr, weight_decay=args.decay)
-        gnn_lr_scheduler = optim.lr_scheduler.StepLR(
-            gnn_optimizer, step_size=20, gamma=0.1
-        )
-        mlp_lr_scheduler = optim.lr_scheduler.StepLR(
-            mlp_optimizer, step_size=20, gamma=0.1
-        )
-        print(gnn_optimizer)
-        print(mlp_optimizer)
+        print("freeze")
+        if args.two_step_freeze:
+            print("two step freeze")
+            pred_optimizer = optim.Adam(
+                gnn_param_group[:1], lr=args.lr, weight_decay=args.decay
+            )
+            sub_optimizer = optim.Adam(
+                gnn_param_group[1:], lr=args.lr, weight_decay=args.decay
+            )
+            mlp_optimizer = optim.Adam(
+                mlp_param_group, lr=args.lr, weight_decay=args.decay
+            )
+            pred_lr_scheduler = optim.lr_scheduler.StepLR(
+                pred_optimizer, step_size=20, gamma=0.1
+            )
+            sub_lr_scheduler = optim.lr_scheduler.StepLR(
+                sub_optimizer, step_size=20, gamma=0.1
+            )
+            mlp_lr_scheduler = optim.lr_scheduler.StepLR(
+                mlp_optimizer, step_size=20, gamma=0.1
+            )
+            print(pred_optimizer)
+            print(sub_optimizer)
+            print(mlp_optimizer)
+        else:
+            print("one step freeze")
+            gnn_optimizer = optim.Adam(
+                gnn_param_group, lr=args.lr, weight_decay=args.decay
+            )
+            mlp_optimizer = optim.Adam(
+                mlp_param_group, lr=args.lr, weight_decay=args.decay
+            )
+            gnn_lr_scheduler = optim.lr_scheduler.StepLR(
+                gnn_optimizer, step_size=20, gamma=0.1
+            )
+            mlp_lr_scheduler = optim.lr_scheduler.StepLR(
+                mlp_optimizer, step_size=20, gamma=0.1
+            )
+            print(gnn_optimizer)
+            print(mlp_optimizer)
     else:
+        print("no freeze")
+        print(gnn_param_group)
+        print(mlp_param_group)
         optimizer = optim.Adam(
             gnn_param_group + mlp_param_group, lr=args.lr, weight_decay=args.decay
         )
@@ -509,17 +583,28 @@ def main():
         print("====epoch " + str(epoch))
 
         if args.freeze:
-            train(
-                args,
-                model,
-                device,
-                train_loader,
-                [gnn_optimizer, mlp_optimizer],
-                [gnn_lr_scheduler, mlp_lr_scheduler],
-                epoch,
-            )
+            if args.two_step_freeze:
+                train(
+                    args,
+                    model,
+                    device,
+                    train_loader,
+                    [pred_optimizer, sub_optimizer, mlp_optimizer],
+                    [pred_lr_scheduler, sub_lr_scheduler, mlp_lr_scheduler],
+                    epoch,
+                )
+            else:
+                train(
+                    args,
+                    model,
+                    device,
+                    train_loader,
+                    [gnn_optimizer, mlp_optimizer],
+                    [gnn_lr_scheduler, mlp_lr_scheduler],
+                    epoch,
+                )
         else:
-            train(args, model, device, train_loader, [optimizer], [scheduler])
+            train(args, model, device, train_loader, [optimizer], [scheduler], epoch)
 
         print("====Evaluation")
         if args.eval_train:
@@ -530,7 +615,7 @@ def main():
         val_acc = eval(args, model, device, val_loader)
         test_acc = eval(args, model, device, test_loader)
 
-        print("train: %f val: %f test: %f" % (train_acc, val_acc, test_acc))
+        print("\ntrain: %f val: %f test: %f" % (train_acc, val_acc, test_acc))
 
         val_acc_list.append(val_acc)
         test_acc_list.append(test_acc)
