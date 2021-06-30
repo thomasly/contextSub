@@ -1,6 +1,7 @@
 import argparse
 import os
 import shutil
+import json
 
 from torch_geometric.data import DataLoader
 import torch
@@ -8,7 +9,14 @@ import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm
 import numpy as np
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import (
+    roc_auc_score,
+    recall_score,
+    f1_score,
+    accuracy_score,
+    precision_score,
+    average_precision_score,
+)
 from tensorboardX import SummaryWriter
 import pandas as pd
 
@@ -100,7 +108,7 @@ def eval(args, model, device, loader):
         batch = batch.to(device)
 
         with torch.no_grad():
-            pred = model(batch)
+            pred = torch.sigmoid(model(batch))
 
         y_true.append(batch.y.view(pred.shape))
         y_scores.append(pred)
@@ -109,19 +117,43 @@ def eval(args, model, device, loader):
     y_scores = torch.cat(y_scores, dim=0).cpu().numpy()
 
     roc_list = []
+    precision_list = []
+    recall_list = []
+    ap_list = []
+    specificity_list = []
+    f1_list = []
+    acc_list = []
     for i in range(y_true.shape[1]):
-        # AUC is only defined when there is at least one positive data.
+        # metrics are only defined when there is at least one positive data.
         if np.sum(y_true[:, i] == 1) > 0 and np.sum(y_true[:, i] == -1) > 0:
             is_valid = y_true[:, i] ** 2 > 0
-            roc_list.append(
-                roc_auc_score((y_true[is_valid, i] + 1) / 2, y_scores[is_valid, i])
+            y_true_01 = (y_true[is_valid, i] + 1) / 2
+            y_pred = np.round(y_scores[is_valid, i]).astype(int)
+            roc_list.append(roc_auc_score(y_true_01, y_scores[is_valid, i]))
+            precision_list.append(precision_score(y_true_01, y_pred, average="binary"))
+            recall_list.append(recall_score(y_true_01, y_pred, average="binary"))
+            ap_list.append(average_precision_score(y_true_01, y_pred, average="binary"))
+            specificity_list.append(
+                recall_score((1 - y_true_01), (1 - y_pred), average="binary")
             )
+            f1_list.append(f1_score(y_true_01, y_pred, average="binary"))
+            acc_list.append(accuracy_score(y_true_01, y_pred, average="binary"))
 
     if len(roc_list) < y_true.shape[1]:
         print("Some target is missing!")
         print("Missing ratio: %f" % (1 - float(len(roc_list)) / y_true.shape[1]))
 
-    return sum(roc_list) / len(roc_list)  # y_true.shape[1]
+    metrics = {
+        "roc_auc": sum(roc_list) / len(roc_list),
+        "precision": sum(precision_list) / len(precision_list),
+        "recall": sum(recall_list) / len(recall_list),
+        "average precision": sum(ap_list) / len(ap_list),
+        "specificity": sum(specificity_list) / len(specificity_list),
+        "f1": sum(f1_list) / len(f1_list),
+        "accuracy": sum(acc_list) / len(acc_list),
+    }
+
+    return metrics
 
 
 def parse_args():
@@ -404,6 +436,10 @@ def decide_split(dataset, args, pattern_path):
 
 def main():
     args = parse_args()
+    arg_outpath = os.path.join("contextSub", "runs", args.filename, "args.txt")
+    if not os.path.exists(arg_outpath):
+        with open(arg_outpath, "w") as f:
+            json.dump(args.__dict__, f, indent=2)
 
     torch.manual_seed(args.runseed)
     np.random.seed(args.runseed)
@@ -565,9 +601,9 @@ def main():
         )
         scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
         print(optimizer)
-    train_acc_list = []
-    val_acc_list = []
-    test_acc_list = []
+    # train_acc_list = []
+    # val_acc_list = []
+    # test_acc_list = []
 
     if not args.filename == "":
         fname = os.path.join(
@@ -580,7 +616,7 @@ def main():
         writer = SummaryWriter(fname)
 
     for epoch in range(1, args.epochs + 1):
-        print("====epoch " + str(epoch))
+        print(f"\n====epoch {epoch}====")
 
         if args.freeze:
             if args.two_step_freeze:
@@ -606,25 +642,33 @@ def main():
         else:
             train(args, model, device, train_loader, [optimizer], [scheduler], epoch)
 
-        print("====Evaluation")
+        print("\n====Evaluation====")
         if args.eval_train:
-            train_acc = eval(args, model, device, train_loader)
+            train_metrics = eval(args, model, device, train_loader)
         else:
             print("omit the training accuracy computation")
-            train_acc = 0
-        val_acc = eval(args, model, device, val_loader)
-        test_acc = eval(args, model, device, test_loader)
+        val_metrics = eval(args, model, device, val_loader)
+        test_metrics = eval(args, model, device, test_loader)
 
-        print("\ntrain: %f val: %f test: %f" % (train_acc, val_acc, test_acc))
+        print(
+            f"""
+            train: {train_metrics}
+            val: {val_metrics}
+            test: {test_metrics}
+            """
+        )
 
-        val_acc_list.append(val_acc)
-        test_acc_list.append(test_acc)
-        train_acc_list.append(train_acc)
+        # val_acc_list.append(val_auc)
+        # test_acc_list.append(test_auc)
+        # train_acc_list.append(train_auc)
 
         if not args.filename == "":
-            writer.add_scalar("data/train_auc", train_acc, epoch)
-            writer.add_scalar("data/val_auc", val_acc, epoch)
-            writer.add_scalar("data/test_auc", test_acc, epoch)
+            for metric, value in train_metrics.items():
+                writer.add_scalar(f"train/{metric}", value, epoch)
+            for metric, value in val_metrics.items():
+                writer.add_scalar(f"val/{metric}", value, epoch)
+            for metric, value in test_metrics.items():
+                writer.add_scalar(f"test/{metric}", value, epoch)
 
         print("")
 
