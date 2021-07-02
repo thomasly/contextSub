@@ -129,15 +129,17 @@ def eval(args, model, device, loader):
             is_valid = y_true[:, i] ** 2 > 0
             y_true_01 = (y_true[is_valid, i] + 1) / 2
             y_pred = np.round(y_scores[is_valid, i]).astype(int)
-            roc_list.append(roc_auc_score(y_true_01, y_scores[is_valid, i]))
+            roc_list.append(
+                roc_auc_score(y_true_01, y_scores[is_valid, i], average="micro")
+            )
             precision_list.append(precision_score(y_true_01, y_pred, average="binary"))
             recall_list.append(recall_score(y_true_01, y_pred, average="binary"))
-            ap_list.append(average_precision_score(y_true_01, y_pred, average="binary"))
+            ap_list.append(average_precision_score(y_true_01, y_pred))
             specificity_list.append(
                 recall_score((1 - y_true_01), (1 - y_pred), average="binary")
             )
             f1_list.append(f1_score(y_true_01, y_pred, average="binary"))
-            acc_list.append(accuracy_score(y_true_01, y_pred, average="binary"))
+            acc_list.append(accuracy_score(y_true_01, y_pred))
 
     if len(roc_list) < y_true.shape[1]:
         print("Some target is missing!")
@@ -438,6 +440,7 @@ def main():
     args = parse_args()
     arg_outpath = os.path.join("contextSub", "runs", args.filename, "args.txt")
     if not os.path.exists(arg_outpath):
+        os.makedirs(os.path.dirname(arg_outpath))
         with open(arg_outpath, "w") as f:
             json.dump(args.__dict__, f, indent=2)
 
