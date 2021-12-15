@@ -522,7 +522,7 @@ class GNN_graphpred(torch.nn.Module):
                 # average the substructures by adding a mask
                 mask = batch.mask.to(torch.bool).squeeze()
                 return self.graph_pred_linear(
-                    self.pool(node_representation[mask], batch[mask])
+                    self.pool(node_representation[mask], batch.batch[mask])
                 )
 
 
@@ -611,12 +611,16 @@ class ContextSubDouble(torch.nn.Module):
 
         # average substructures first, then the whole molecule
         mask = batch.mask.to(torch.bool).squeeze()
-        mol_repr_pooled = self.pool(
-            mol_repr[mask], batch.pooling_indicator[mask].squeeze(),
-        )
-        sub_repr_pooled = self.pool(
-            sub_repr[mask], batch.pooling_indicator[mask].squeeze(),
-        )
+        if hasattr(batch, "pooling_indicator"):
+            mol_repr_pooled = self.pool(
+                mol_repr[mask], batch.pooling_indicator[mask].squeeze(),
+            )
+            sub_repr_pooled = self.pool(
+                sub_repr[mask], batch.pooling_indicator[mask].squeeze(),
+            )
+        else:
+            mol_repr_pooled = self.pool(mol_repr[mask], batch.batch[mask])
+            sub_repr_pooled = self.pool(sub_repr[mask], batch.batch[mask])
 
         sub_indi, mol_indi = GNN_graphpred.separate_indicators(batch.emb_indicator)
         sub_pooled = self.pool(sub_repr_pooled, sub_indi)[:-1]

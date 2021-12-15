@@ -306,6 +306,18 @@ def parse_args():
         action="store_true",
         help="Use 2-step freezing strategy to fine-tune the model.",
     )
+    parser.add_argument(
+        "--use_lightbbb_test",
+        action="store_true",
+        help="If present, use the external testing set from LightBBB. "
+        "Otherwise, generate testing set with scaffold splitting method.",
+    )
+    parser.add_argument(
+        "--save_model",
+        type=str,
+        default=None,
+        help="Save finetuned model to given path.",
+    )
     args = parser.parse_args()
     return args
 
@@ -339,19 +351,35 @@ def get_num_tasks(task):
 def decide_split(dataset, args, pattern_path):
     if args.dataset == "lightbbb":
         if args.split == "scaffold":
-            smiles_list = pd.read_csv(
-                "contextSub/dataset/" + args.dataset + "/processed/smiles.csv",
-                header=None,
-            )[0].tolist()
-            train_dataset, valid_dataset, _ = scaffold_split(
-                dataset,
-                smiles_list,
-                null_value=0,
-                frac_train=0.9,
-                frac_valid=0.1,
-                frac_test=0.0,
-            )
-            print("scaffold")
+            if args.use_lightbbb_test:
+                print("scaffold")
+                smiles_list = pd.read_csv(
+                    "contextSub/dataset/" + args.dataset + "/processed/smiles.csv",
+                    header=None,
+                )[0].tolist()
+                train_dataset, valid_dataset, _ = scaffold_split(
+                    dataset,
+                    smiles_list,
+                    null_value=0,
+                    frac_train=0.9,
+                    frac_valid=0.1,
+                    frac_test=0.0,
+                )
+                print("Use LightBBB testing set.")
+            else:
+                smiles_list = pd.read_csv(
+                    "contextSub/dataset/" + args.dataset + "/processed/smiles.csv",
+                    header=None,
+                )[0].tolist()
+                train_dataset, valid_dataset, test_dataset = scaffold_split(
+                    dataset,
+                    smiles_list,
+                    null_value=0,
+                    frac_train=0.8,
+                    frac_valid=0.1,
+                    frac_test=0.1,
+                )
+                print("Not using LightBBB testing set.")
         elif args.split == "random":
             train_dataset, valid_dataset, _ = random_split(
                 dataset,
@@ -379,16 +407,18 @@ def decide_split(dataset, args, pattern_path):
             print("random scaffold")
         else:
             raise ValueError("Invalid split option.")
-        test_dataset = MoleculeDataset(
-            "contextSub/dataset/lightbbb_test",
-            dataset="lightbbb_test",
-            partial_charge=args.partial_charge,
-            substruct_input=args.sub_input,
-            pattern_path=pattern_path,
-            context=args.context,
-            hops=args.num_layer,
-            pooling_indicator=args.pooling_indicator,
-        )
+
+        if args.use_lightbbb_test:
+            test_dataset = MoleculeDataset(
+                "contextSub/dataset/lightbbb_test",
+                dataset="lightbbb_test",
+                partial_charge=args.partial_charge,
+                substruct_input=args.sub_input,
+                pattern_path=pattern_path,
+                context=args.context,
+                hops=args.num_layer,
+                pooling_indicator=args.pooling_indicator,
+            )
     else:
         if args.split == "scaffold":
             smiles_list = pd.read_csv(
@@ -653,27 +683,38 @@ def main():
         val_metrics = eval(args, model, device, val_loader)
         test_metrics = eval(args, model, device, test_loader)
 
-        print(
-            f"""
-            train: {train_metrics}
-            val: {val_metrics}
-            test: {test_metrics}
-            """
-        )
+        result_str = f"\nval: {val_metrics}\ntest: {test_metrics}\n"
+        if args.eval_train:
+            result_str = f"\ntrain: {train_metrics}" + result_str
+
+        print(result_str)
 
         # val_acc_list.append(val_auc)
         # test_acc_list.append(test_auc)
         # train_acc_list.append(train_auc)
 
         if not args.filename == "":
-            for metric, value in train_metrics.items():
-                writer.add_scalar(f"train/{metric}", value, epoch)
+            if args.eval_train:
+                for metric, value in train_metrics.items():
+                    writer.add_scalar(f"train/{metric}", value, epoch)
             for metric, value in val_metrics.items():
                 writer.add_scalar(f"val/{metric}", value, epoch)
             for metric, value in test_metrics.items():
                 writer.add_scalar(f"test/{metric}", value, epoch)
 
         print("")
+
+    if args.save_model is not None:
+        os.makedirs(args.save_model, exist_ok=True)
+        if hasattr(model, "gnn"):
+            torch.save(model.gnn.state_dict(), os.path.join(args.save_model, "gnn.pth"))
+        else:
+            torch.save(
+                model.gnn1.state_dict(), os.path.join(args.save_model, "gnn1.pth")
+            )
+            torch.save(
+                model.gnn2.state_dict(), os.path.join(args.save_model, "gnn2.pth")
+            )
 
     if not args.filename == "":
         writer.close()

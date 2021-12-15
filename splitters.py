@@ -2,6 +2,8 @@ import torch
 import random
 import numpy as np
 from itertools import compress
+
+from rdkit import Chem
 from rdkit.Chem.Scaffolds import MurckoScaffold
 from collections import defaultdict
 from sklearn.model_selection import StratifiedKFold
@@ -18,6 +20,48 @@ def generate_scaffold(smiles, include_chirality=False):
         smiles=smiles, includeChirality=include_chirality
     )
     return scaffold
+
+
+def _get_all_scaffolds(smiles_list):
+    # create dict of the form {scaffold_i: [idx1, idx....]}
+    all_scaffolds = {}
+    for i, smiles in smiles_list:
+        scaffold = generate_scaffold(smiles, include_chirality=True)
+        if scaffold not in all_scaffolds:
+            all_scaffolds[scaffold] = [i]
+        else:
+            all_scaffolds[scaffold].append(i)
+
+    # sort from largest to smallest sets
+    all_scaffolds = {key: sorted(value) for key, value in all_scaffolds.items()}
+    all_scaffold_sets = [
+        scaffold_set
+        for (scaffold, scaffold_set) in sorted(
+            all_scaffolds.items(), key=lambda x: (len(x[1]), x[1][0]), reverse=True
+        )
+    ]
+    return all_scaffold_sets
+
+
+def _get_train_val_test_indices(
+    smiles_list, all_scaffold_sets, frac_train, frac_valid, frac_test
+):
+    train_cutoff = frac_train * len(smiles_list)
+    valid_cutoff = (frac_train + frac_valid) * len(smiles_list)
+    train_idx, valid_idx, test_idx = [], [], []
+    for scaffold_set in all_scaffold_sets:
+        if len(train_idx) + len(scaffold_set) > train_cutoff:
+            if len(train_idx) + len(valid_idx) + len(scaffold_set) > valid_cutoff:
+                test_idx.extend(scaffold_set)
+            else:
+                valid_idx.extend(scaffold_set)
+        else:
+            train_idx.extend(scaffold_set)
+
+    assert len(set(train_idx).intersection(set(valid_idx))) == 0
+    assert len(set(test_idx).intersection(set(valid_idx))) == 0
+
+    return train_idx, valid_idx, test_idx
 
 
 def scaffold_split(
@@ -63,39 +107,11 @@ def scaffold_split(
         non_null = np.ones(len(dataset)) == 1
         smiles_list = list(compress(enumerate(smiles_list), non_null))
 
-    # create dict of the form {scaffold_i: [idx1, idx....]}
-    all_scaffolds = {}
-    for i, smiles in smiles_list:
-        scaffold = generate_scaffold(smiles, include_chirality=True)
-        if scaffold not in all_scaffolds:
-            all_scaffolds[scaffold] = [i]
-        else:
-            all_scaffolds[scaffold].append(i)
+    all_scaffold_sets = _get_all_scaffolds(smiles_list)
 
-    # sort from largest to smallest sets
-    all_scaffolds = {key: sorted(value) for key, value in all_scaffolds.items()}
-    all_scaffold_sets = [
-        scaffold_set
-        for (scaffold, scaffold_set) in sorted(
-            all_scaffolds.items(), key=lambda x: (len(x[1]), x[1][0]), reverse=True
-        )
-    ]
-
-    # get train, valid test indices
-    train_cutoff = frac_train * len(smiles_list)
-    valid_cutoff = (frac_train + frac_valid) * len(smiles_list)
-    train_idx, valid_idx, test_idx = [], [], []
-    for scaffold_set in all_scaffold_sets:
-        if len(train_idx) + len(scaffold_set) > train_cutoff:
-            if len(train_idx) + len(valid_idx) + len(scaffold_set) > valid_cutoff:
-                test_idx.extend(scaffold_set)
-            else:
-                valid_idx.extend(scaffold_set)
-        else:
-            train_idx.extend(scaffold_set)
-
-    assert len(set(train_idx).intersection(set(valid_idx))) == 0
-    assert len(set(test_idx).intersection(set(valid_idx))) == 0
+    train_idx, valid_idx, test_idx = _get_train_val_test_indices(
+        smiles_list, all_scaffold_sets, frac_train, frac_valid, frac_test
+    )
 
     train_dataset = dataset[torch.tensor(train_idx)]
     valid_dataset = dataset[torch.tensor(valid_idx)]
@@ -113,6 +129,30 @@ def scaffold_split(
             test_dataset,
             (train_smiles, valid_smiles, test_smiles),
         )
+
+
+def scaffold_split_from_smiles(
+    smiles_list, frac_train=0.8, frac_valid=0.1, frac_test=0.1,
+):
+    """ The same algorithm as scaffold_split. Only take SMILES list as input and return
+    indices of the train, validation, and test samples.
+
+    Args:
+        smiles_list (list): list of SMILES to be splitted.
+        frac_train (float): fraction of the training set. Default is 0.8.
+        frac_valid (float): fraction of the validation set. Default is 0.1.
+        frac_test (float): fraction of the testing set. Default is 0.1.
+
+    Return:
+        Lists of indices of the SMILES in the training, validation and testing sets with
+    respect to the input smiles_list.
+    """
+    valid = [False if Chem.MolFromSmiles(sm) is None else True for sm in smiles_list]
+    smiles_list = list(compress(enumerate(smiles_list), valid))
+    all_scaffold_sets = _get_all_scaffolds(smiles_list)
+    return _get_train_val_test_indices(
+        smiles_list, all_scaffold_sets, frac_train, frac_valid, frac_test
+    )
 
 
 def random_scaffold_split(
