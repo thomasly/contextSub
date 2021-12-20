@@ -11,6 +11,7 @@ from rdkit.Chem.rdMolDescriptors import GetMorganFingerprintAsBitVect
 from torch.utils import data
 from torch_geometric.data import Data
 from torch_geometric.data import InMemoryDataset
+from tqdm import tqdm
 
 from .util import (
     get_substructs,
@@ -28,6 +29,15 @@ class MoleculeDataset(InMemoryDataset):
         pre_transform=None,
         pre_filter=None,
         dataset="zinc250k",
+<<<<<<< HEAD
+=======
+        partial_charge=False,
+        substruct_input=False,
+        pattern_path=None,
+        context=False,
+        hops=5,
+        pooling_indicator=False,
+>>>>>>> dev
     ):
         """
         The main Dataset class for the project.
@@ -39,9 +49,23 @@ class MoleculeDataset(InMemoryDataset):
                 data preprocessing.
             prefilter (callable): the one-time filter for data preprocessing.
             dataset (str): name of the dataset.
+            partial_charge (bool): use partial charge property.
+            substruct_input (bool): substructures of a molecule are used to generate a
+                single graph together with the whole molecule for input.
+            pattern_path (str): path to the csv file saving SMARTS patterns.
+            context (bool): substructs include context.
+            hops (int): number of hops of the context from central structure.
+            pooling_indicator (bool): include pooling indicator (to calculate pooling
+                for substructures) in the Data object.
         """
         self.dataset = dataset
         self.root = root
+        self.partial_charge = partial_charge
+        self.substruct_input = substruct_input
+        self.pattern_path = pattern_path
+        self.context = context
+        self.hops = hops
+        self.pooling_indecator = pooling_indicator
         super(MoleculeDataset, self).__init__(
             root, transform, pre_transform, pre_filter
         )
@@ -54,23 +78,45 @@ class MoleculeDataset(InMemoryDataset):
 
     @property
     def processed_file_names(self):
-        return "geometric_data_processed.pt"
+        if self.substruct_input:
+            if self.context:
+                if self.pooling_indecator:
+                    return "geometric_data_substruct_indicator_processed.pt"
+                else:
+                    return "geometric_data_substruct_context_processed.pt"
+            else:
+                return "geometric_data_substruct_processed.pt"
+        elif self.partial_charge:
+            return "geometric_data_processed_partialcharge.pt"
+        else:
+            return "geometric_data_processed.pt"
 
     def download(self):
         pass
 
     def add_data_to_list(self, smiles, mols, labels, data_list, data_smiles_list):
-        for i in range(len(smiles)):
+        """ Generate Data objects from smiles and add them into given data_list.
+        """
+        for i in tqdm(range(len(smiles))):
             rdkit_mol = mols[i]
             if rdkit_mol is None:
                 continue
-            data = mol_to_graph_data_obj_simple(rdkit_mol)
+            data = mol_to_graph_data_obj_simple(
+                rdkit_mol,
+                self.partial_charge,
+                self.substruct_input,
+                pattern_path=self.pattern_path,
+                mask=self.context,
+                hops=self.hops,
+                pooling_indicator=self.pooling_indecator,
+            )
+            if data is None:
+                continue
             data.id = torch.tensor([i])
             if len(labels.shape) > 1:
                 data.y = torch.tensor(labels[i, :])
             else:
                 data.y = torch.tensor([labels[i]])
-            data.substructs = get_substructs(rdkit_mol)
             data_list.append(data)
             data_smiles_list.append(smiles[i])
 
@@ -87,11 +133,13 @@ class MoleculeDataset(InMemoryDataset):
             if rdkit_mol is None:
                 continue
             else:
-                data = mol_to_graph_data_obj_simple(rdkit_mol)
+                data = mol_to_graph_data_obj_simple(rdkit_mol, self.partial_charge)
                 # add mol id
                 id = int(zinc_id_list[i].split("ZINC")[1].lstrip("0"))
                 data.id = torch.tensor([id])
-                data.substructs = get_substructs(rdkit_mol)
+                data.substructs = get_substructs(
+                    rdkit_mol, pattern_path=self.pattern_path
+                )
                 data_list.append(data)
                 data_smiles_list.append(smiles_list[i])
 
@@ -108,10 +156,14 @@ class MoleculeDataset(InMemoryDataset):
             if rdkit_mol is not None:
                 mw = Descriptors.MolWt(rdkit_mol)
                 if 50 <= mw <= 900:
-                    data = mol_to_graph_data_obj_simple(rdkit_mol)
+                    data = mol_to_graph_data_obj_simple(rdkit_mol, self.partial_charge)
+                    if data is None:
+                        continue
                     # manually add mol id
                     data.id = torch.tensor([i])
-                    data.substructs = get_substructs(rdkit_mol)
+                    data.substructs = get_substructs(
+                        rdkit_mol, pattern_path=self.pattern_path
+                    )
                     # No matches patterns
                     if len(data.substructs) == 0:
                         continue
@@ -135,33 +187,34 @@ class MoleculeDataset(InMemoryDataset):
         data_list = []
         if self.dataset == "zinc_standard_agent":
             self.load_zinc_standard_dataset(data_list, data_smiles_list)
-
         elif self.dataset == "chembl":
             self.load_chembl_dataset(data_list, data_smiles_list)
-
         elif self.dataset == "tox21":
             self.load_dataset(data_list, data_smiles_list, method=_load_tox21_dataset)
-
         elif self.dataset == "hiv":
             self.load_dataset(data_list, data_smiles_list, method=_load_hiv_dataset)
-
         elif self.dataset == "bace":
             self.load_dataset(data_list, data_smiles_list, method=_load_bace_dataset)
-
         elif self.dataset == "bbbp":
             self.load_dataset(data_list, data_smiles_list, method=_load_bbbp_dataset)
-
         elif self.dataset == "clintox":
             self.load_dataset(data_list, data_smiles_list, method=_load_clintox_dataset)
-
         elif self.dataset == "muv":
             self.load_dataset(data_list, data_smiles_list, method=_load_muv_dataset)
-
         elif self.dataset == "sider":
             self.load_dataset(data_list, data_smiles_list, method=_load_sider_dataset)
-
         elif self.dataset == "toxcast":
             self.load_dataset(data_list, data_smiles_list, method=_load_toxcast_dataset)
+        elif self.dataset == "lightbbb":
+            self.load_dataset(
+                data_list, data_smiles_list, method=_load_lightbbb_dataset
+            )
+        elif self.dataset == "lightbbb_test":
+            self.load_dataset(
+                data_list, data_smiles_list, method=_load_lightbbb_testset
+            )
+        elif self.dataset == "evaluation":
+            self.load_dataset(data_list, data_smiles_list, method=_load_eval_dataset)
         else:
             raise ValueError("Invalid dataset name")
 
@@ -181,8 +234,6 @@ class MoleculeDataset(InMemoryDataset):
         torch.save((data, slices), self.processed_paths[0])
 
 
-# NB: only properly tested when dataset_1 is chembl_with_labels and dataset_2
-# is pcba_pretrain
 def merge_dataset_objs(dataset_1, dataset_2):
     """
     Naively merge 2 molecule dataset objects, and ignore identities of
@@ -627,6 +678,61 @@ def _load_toxcast_dataset(input_path):
     return preprocessed_smiles_list, preprocessed_rdkit_mol_objs_list, labels.values
 
 
+def _load_lightbbb_dataset(input_path):
+    input_df = pd.read_csv(input_path)
+    smiles_list = input_df["smiles"]
+    rdkit_mol_objs_list = [AllChem.MolFromSmiles(s) for s in smiles_list]
+    preprocessed_smiles_list = [
+        AllChem.MolToSmiles(m) if m is not None else None for m in rdkit_mol_objs_list
+    ]
+    labels = input_df["BBclass"]
+    # convert 0 to -1
+    labels = labels.replace(0, -1)
+    assert len(smiles_list) == len(rdkit_mol_objs_list)
+    assert len(smiles_list) == len(preprocessed_smiles_list)
+    assert len(smiles_list) == len(labels)
+    return preprocessed_smiles_list, rdkit_mol_objs_list, labels.values
+
+
+def _load_lightbbb_testset(input_path):
+    input_df = pd.read_csv(input_path)
+    smiles_list = input_df["smiles"]
+    rdkit_mol_objs_list = [AllChem.MolFromSmiles(s) for s in smiles_list]
+    preprocessed_smiles_list = [
+        AllChem.MolToSmiles(m) if m is not None else None for m in rdkit_mol_objs_list
+    ]
+    labels = input_df["BBclass"]
+    # convert 0 to -1
+    labels = labels.replace(0, -1)
+    assert len(smiles_list) == len(rdkit_mol_objs_list)
+    assert len(smiles_list) == len(preprocessed_smiles_list)
+    assert len(smiles_list) == len(labels)
+    return preprocessed_smiles_list, rdkit_mol_objs_list, labels.values
+
+
+def _load_eval_dataset(input_path):
+    with open(input_path, "rb") as f:
+        mols = pickle.load(f)
+    smiles_list = []
+    rdkit_mol_objs_list = []
+    labels = []
+    for smiles, props in mols.items():
+        smiles_list.append(smiles)
+        rdkit_mol_objs_list.append(AllChem.MolFromSmiles(smiles))
+        labels.append([props["log_p"], props["mr"]])
+    preprocessed_rdkit_mol_objs_list = [
+        m if m is not None else None for m in rdkit_mol_objs_list
+    ]
+    preprocessed_smiles_list = [
+        AllChem.MolToSmiles(m) if m is not None else None
+        for m in preprocessed_rdkit_mol_objs_list
+    ]
+    assert len(smiles_list) == len(preprocessed_rdkit_mol_objs_list)
+    assert len(smiles_list) == len(preprocessed_smiles_list)
+    assert len(smiles_list) == len(labels)
+    return preprocessed_smiles_list, preprocessed_rdkit_mol_objs_list, np.array(labels)
+
+
 def _load_chembl_with_labels_dataset(root_path):
     """
     Data from 'Large-scale comparison of machine learning methods for drug target
@@ -722,18 +828,20 @@ def create_all_datasets():
     for dataset_name in downstream_dir:
         print(dataset_name)
         root = "contextSub/dataset/" + dataset_name
-        dataset = MoleculeDataset(root, dataset=dataset_name)
+        dataset = MoleculeDataset(root, dataset=dataset_name, partial_charge=True)
         print(dataset)
 
     print("chembl")
-    dataset = MoleculeDataset(root="contextSub/dataset/chembl", dataset="chembl")
-    print(dataset)
-
-    print("zinc")
     dataset = MoleculeDataset(
-        root="contextSub/dataset/zinc_standard_agent", dataset="zinc_standard_agent"
+        root="contextSub/dataset/chembl", dataset="chembl", partial_charge=True
     )
     print(dataset)
+
+    # print("zinc")
+    # dataset = MoleculeDataset(
+    #     root="contextSub/dataset/zinc_standard_agent", dataset="zinc_standard_agent"
+    # )
+    # print(dataset)
 
 
 # test MoleculeDataset object

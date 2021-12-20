@@ -4,7 +4,7 @@ import json
 import torch
 import networkx as nx
 from rdkit import Chem
-from rdkit.Chem import AllChem
+from rdkit.Chem import AllChem, rdPartialCharges
 import pandas as pd
 import numpy as np
 from torch_geometric.data import Data
@@ -79,24 +79,100 @@ def split_rdkit_mol_obj(mol):
     return mol_species_list
 
 
-def mol_to_graph_data_obj_simple(mol):
+def update_substruct(data, root_substruct, partial_charge, k):
+    """ Update substructures by adding contexts.
+
+    Args:
+        data (PyG Data object): the object to search context from.
+        substrcut (list): list of int, indices of atoms in the substructure.
+        mol (RDKit Mol)
+        parital_charge (bool): include partial charge property if True.
+        k (int): number of hops.
+
+    return:
+        substruct (list): updated substruct atom indices list with context atoms.
+        mask (list): mask vector indicating the central structure and context. 0 is
+            context, 1 is central substructure.
     """
-    Converts rdkit mol object to graph Data object required by the pytorch
-    geometric package. NB: Uses simplified atom and bond features, and represent
-    as indices
-    :param mol: rdkit mol object
-    :return: graph data object with the attributes: x, edge_index, edge_attr
-    """
-    # atoms, num_atom_features = 2
+    G = graph_data_obj_to_nx_simple(data, partial_charge)
+    # Get k-hop subgraph rooted at specified substruct
+    substruct_node_idxes = set()
+    for node in root_substruct:
+        new_idxes = nx.single_source_shortest_path_length(G, node, k).keys()
+        substruct_node_idxes = substruct_node_idxes.union(new_idxes)
+    substruct_node_idxes = list(substruct_node_idxes)
+    mask = torch.zeros((len(substruct_node_idxes), 1), dtype=torch.long)
+    for i, idx in enumerate(substruct_node_idxes):
+        if idx in root_substruct:
+            mask[i, 0] = 1
+    return substruct_node_idxes, mask
+
+
+def get_substruct_x(substruct, mol, partial_charge):
     atom_features_list = []
-    for atom in mol.GetAtoms():
+    for atom_idx in substruct:
+        atom = mol.GetAtomWithIdx(atom_idx)
         atom_feature = [
             allowable_features["possible_atomic_num_list"].index(atom.GetAtomicNum())
         ] + [allowable_features["possible_chirality_list"].index(atom.GetChiralTag())]
+        if partial_charge:
+            atom_feature += [atom.GetDoubleProp("_GasteigerCharge")]
         atom_features_list.append(atom_feature)
-    x = torch.tensor(np.array(atom_features_list), dtype=torch.long)
+    if partial_charge:
+        x = torch.tensor(np.array(atom_features_list), dtype=torch.float)
+    else:
+        x = torch.tensor(np.array(atom_features_list), dtype=torch.long)
+    return x
 
-    # bonds
+
+def get_substruct_bonds(substruct, mol):
+    """ Get the bonds within a substruct
+    """
+    atom_pairs = list()
+    for i in substruct:
+        for j in substruct:
+            if j > i:
+                atom_pairs.append((i, j))
+    bonds = list()
+    for pair in atom_pairs:
+        bond = mol.GetBondBetweenAtoms(*pair)
+        if bond is not None:
+            bonds.append(bond)
+    return bonds
+
+
+def get_substruct_edge_attrs(substruct, mol, starting_idx=0):
+    num_bond_features = 2  # bond type, bond direction
+    bonds = get_substruct_bonds(substruct, mol)
+    idx_map = dict()
+    for i, atom_idx in enumerate(substruct):
+        idx_map[atom_idx] = i + starting_idx
+    if len(bonds) > 0:  # mol has bonds
+        edges_list = []
+        edge_features_list = []
+        for bond in bonds:
+            i = bond.GetBeginAtomIdx()
+            j = bond.GetEndAtomIdx()
+            edge_feature = [
+                allowable_features["possible_bonds"].index(bond.GetBondType())
+            ] + [allowable_features["possible_bond_dirs"].index(bond.GetBondDir())]
+            edges_list.append((idx_map[i], idx_map[j]))
+            edge_features_list.append(edge_feature)
+            edges_list.append((idx_map[j], idx_map[i]))
+            edge_features_list.append(edge_feature)
+
+        # data.edge_index: Graph connectivity in COO format with shape [2, num_edges]
+        edge_index = torch.tensor(np.array(edges_list).T, dtype=torch.long)
+
+        # data.edge_attr: Edge feature matrix with shape [num_edges, num_edge_features]
+        edge_attr = torch.tensor(np.array(edge_features_list), dtype=torch.long)
+    else:  # mol has no bonds
+        edge_index = torch.empty((2, 0), dtype=torch.long)
+        edge_attr = torch.empty((0, num_bond_features), dtype=torch.long)
+    return edge_index, edge_attr
+
+
+def get_edge_attrs(mol):
     num_bond_features = 2  # bond type, bond direction
     if len(mol.GetBonds()) > 0:  # mol has bonds
         edges_list = []
@@ -120,13 +196,100 @@ def mol_to_graph_data_obj_simple(mol):
     else:  # mol has no bonds
         edge_index = torch.empty((2, 0), dtype=torch.long)
         edge_attr = torch.empty((0, num_bond_features), dtype=torch.long)
+    return edge_index, edge_attr
+
+
+def get_substruct_input_data(
+    data, context, mol, hops, pooling_indicator, partial_charge, starting_idx
+):
+    for i, patterns in enumerate(data.substructs):
+        for substruct in patterns:
+            if context:
+                substruct, mask = update_substruct(data, substruct, mol, hops)
+                data.mask = torch.cat([data.mask, mask], dim=0)
+                if pooling_indicator:
+                    data.pooling_indicator = torch.cat(
+                        [
+                            data.pooling_indicator,
+                            torch.ones((mask.size(0), 1), dtype=torch.long) * (i + 1),
+                        ],
+                        dim=0,
+                    )
+            substruct_x = get_substruct_x(substruct, mol, partial_charge)
+            substruct_edge_list, substruct_edge_attrs = get_substruct_edge_attrs(
+                substruct, mol, starting_idx=starting_idx
+            )
+            data.x = torch.cat([data.x, substruct_x], 0)
+            data.edge_index = torch.cat([data.edge_index, substruct_edge_list], 1)
+            data.edge_attr = torch.cat([data.edge_attr, substruct_edge_attrs], 0)
+            starting_idx += len(substruct)
+
+
+def mol_to_graph_data_obj_simple(
+    mol,
+    partial_charge=False,
+    substruct_input=False,
+    pattern_path=None,
+    mask=False,
+    hops=5,
+    pooling_indicator=False,
+):
+    """
+    Converts rdkit mol object to graph Data object required by the pytorch
+    geometric package. NB: Uses simplified atom and bond features, and represent
+    as indices.
+
+    Args:
+        mol: rdkit mol object.
+        partial_charge (bool): if to add atom partial charge as atom property.
+        substruct_input (bool): add substructure nodes into data.x
+        patten_path (str): path to the csv file with PubChem SMARTS patterns.
+        context (bool): substructs include context.
+        hops (int): number of hops of the context from central structure.
+        pooling_indicator (bool): include pooling indicator (to calculate pooling
+            for substructures) in the Data object.
+    Returns:
+        graph data object with the attributes: x, edge_index, edge_attr
+    """
+    # atoms, num_atom_features = 2
+    atom_features_list = []
+    if partial_charge:
+        rdPartialCharges.ComputeGasteigerCharges(mol)
+        for atom in mol.GetAtoms():
+            if np.isnan(atom.GetDoubleProp("_GasteigerCharge")):
+                return
+    for atom in mol.GetAtoms():
+        atom_feature = [
+            allowable_features["possible_atomic_num_list"].index(atom.GetAtomicNum())
+        ] + [allowable_features["possible_chirality_list"].index(atom.GetChiralTag())]
+        if partial_charge:
+            atom_feature += [atom.GetDoubleProp("_GasteigerCharge")]
+        atom_features_list.append(atom_feature)
+    if partial_charge:
+        x = torch.tensor(np.array(atom_features_list), dtype=torch.float)
+    else:
+        x = torch.tensor(np.array(atom_features_list), dtype=torch.long)
+
+    # bonds
+    edge_index, edge_attr = get_edge_attrs(mol)
 
     data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
-
+    data.substructs = get_substructs(mol, pattern_path)
+    starting_idx = len(list(mol.GetAtoms()))
+    if mask:
+        data.mask = torch.ones((data.x.size(0), 1), dtype=torch.long)
+        if pooling_indicator:
+            data.pooling_indicator = torch.zeros((data.x.size(0), 1), dtype=torch.long)
+    if substruct_input:
+        get_substruct_input_data(
+            data, mask, mol, hops, pooling_indicator, partial_charge, starting_idx
+        )
     return data
 
 
-def graph_data_obj_to_mol_simple(data_x, data_edge_index, data_edge_attr):
+def graph_data_obj_to_mol_simple(
+    data_x, data_edge_index, data_edge_attr, partial_charge=False
+):
     """
     Convert pytorch geometric data obj to rdkit mol object. NB: Uses simplified
     atom and bond features, and represent as indices.
@@ -141,11 +304,16 @@ def graph_data_obj_to_mol_simple(data_x, data_edge_index, data_edge_attr):
     atom_features = data_x.cpu().numpy()
     num_atoms = atom_features.shape[0]
     for i in range(num_atoms):
-        atomic_num_idx, chirality_tag_idx = atom_features[i]
+        if partial_charge:
+            atomic_num_idx, chirality_tag_idx, pc = atom_features[i]
+        else:
+            atomic_num_idx, chirality_tag_idx = atom_features[i, :2]
         atomic_num = allowable_features["possible_atomic_num_list"][atomic_num_idx]
         chirality_tag = allowable_features["possible_chirality_list"][chirality_tag_idx]
         atom = Chem.Atom(atomic_num)
         atom.SetChiralTag(chirality_tag)
+        if partial_charge:
+            atom.SetDoubleProp("_GasteigerCharge", pc)
         mol.AddAtom(atom)
 
     # bonds
@@ -171,7 +339,7 @@ def graph_data_obj_to_mol_simple(data_x, data_edge_index, data_edge_attr):
     return mol
 
 
-def graph_data_obj_to_nx_simple(data):
+def graph_data_obj_to_nx_simple(data, partial_charge=False):
     """
     Converts graph Data object required by the pytorch geometric package to
     network x data object. NB: Uses simplified atom and bond features,
@@ -186,9 +354,19 @@ def graph_data_obj_to_nx_simple(data):
     atom_features = data.x.cpu().numpy()
     num_atoms = atom_features.shape[0]
     for i in range(num_atoms):
-        atomic_num_idx, chirality_tag_idx = atom_features[i]
-        G.add_node(i, atom_num_idx=atomic_num_idx, chirality_tag_idx=chirality_tag_idx)
-        pass
+        if partial_charge:
+            atomic_num_idx, chirality_tag_idx, pc = atom_features[i]
+            G.add_node(
+                i,
+                atom_num_idx=atomic_num_idx,
+                chirality_tag_idx=chirality_tag_idx,
+                partial_charge=pc,
+            )
+        else:
+            atomic_num_idx, chirality_tag_idx = atom_features[i, :2]
+            G.add_node(
+                i, atom_num_idx=atomic_num_idx, chirality_tag_idx=chirality_tag_idx
+            )
 
     # bonds
     edge_index = data.edge_index.cpu().numpy()
@@ -209,7 +387,7 @@ def graph_data_obj_to_nx_simple(data):
     return G
 
 
-def nx_to_graph_data_obj_simple(G):
+def nx_to_graph_data_obj_simple(G, partial_charge=False):
     """
     Converts nx graph to pytorch geometric Data object. Assume node indices
     are numbered from 0 to num_nodes - 1. NB: Uses simplified atom and bond
@@ -222,9 +400,19 @@ def nx_to_graph_data_obj_simple(G):
     # atoms, num_atom_features = 2, (atom type, chirality tag)
     atom_features_list = []
     for _, node in G.nodes(data=True):
-        atom_feature = [node["atom_num_idx"], node["chirality_tag_idx"]]
+        if partial_charge:
+            atom_feature = [
+                node["atom_num_idx"],
+                node["chirality_tag_idx"],
+                node["partial_charge"],
+            ]
+        else:
+            atom_feature = [node["atom_num_idx"], node["chirality_tag_idx"]]
         atom_features_list.append(atom_feature)
-    x = torch.tensor(np.array(atom_features_list), dtype=torch.long)
+    if partial_charge:
+        x = torch.tensor(np.array(atom_features_list), dtype=torch.float)
+    else:
+        x = torch.tensor(np.array(atom_features_list), dtype=torch.long)
 
     # bonds
     num_bond_features = 2  # bond type, bond direction
@@ -318,12 +506,7 @@ def reset_idxes(G):
     return new_G, mapping
 
 
-def get_substructs(
-    mol,
-    pattern_path=osp.join(
-        "contextSub", "resources", "pubchemFPKeys_to_SMARTSpattern.csv"
-    ),
-):
+def get_substructs(mol, pattern_path=None):
     """ Get substructures from a mol.
 
     Args:
@@ -334,6 +517,10 @@ def get_substructs(
     Returns:
         substructs (list): list of lists of atom indices belonging to each substrucure.
     """
+    if pattern_path is None:
+        pattern_path = osp.join(
+            "contextSub", "resources", "pubchemFPKeys_to_SMARTSpattern.csv"
+        )
     patterns_df = pd.read_csv(pattern_path)
     patterns = [Chem.MolFromSmarts(sm) for sm in patterns_df.SMARTS]
     substructs = list()
@@ -344,7 +531,7 @@ def get_substructs(
     return substructs
 
 
-def _load_candidates(pattern, chemicals):
+def _load_candidates(pattern, chemicals, partial_charge=False):
     candidates = json.load(open(chemicals))
     data_list = []
     y = list()
@@ -354,7 +541,7 @@ def _load_candidates(pattern, chemicals):
         label += 1
         for sm in sms:
             mol = Chem.MolFromSmiles(sm)
-            data = mol_to_graph_data_obj_simple(mol)
+            data = mol_to_graph_data_obj_simple(mol, partial_charge=partial_charge)
             data.atom = str(key)
             data.substructs = torch.tensor(
                 mol.GetSubstructMatch(pattern), dtype=torch.int
@@ -375,7 +562,7 @@ def _get_slices(batch):
     return slices
 
 
-def evaluate_pretraining(pattern, chemicals, model_path):
+def evaluate_pretraining(pattern, chemicals, model_path, partial_charge=False):
     """ Evaluate the pretraining by analyzing the embeddings of the same substructure
     within different contexts.
 
@@ -383,11 +570,23 @@ def evaluate_pretraining(pattern, chemicals, model_path):
         pattern (RDKit Mol): the pattern to decide the centeral substructure.
         chemicals (str): path to the json file with chemicals.
         model_path (str): path to the pretrained model.
+        partial_charge (bool): the model takes partial charge as atom property.
+
+    Returns:
+        pattern_embs: the embeddings of patterns.
+        y: pattern labels based on input.
     """
-    data_list, y = _load_candidates(pattern, chemicals)
+    data_list, y = _load_candidates(pattern, chemicals, partial_charge)
     batch = Batch.from_data_list(data_list)
     slices = _get_slices(batch)
-    model = GNN(num_layer=5, emb_dim=300, JK="last", drop_ratio=0.5, gnn_type="gin")
+    model = GNN(
+        num_layer=5,
+        emb_dim=300,
+        JK="last",
+        drop_ratio=0.5,
+        gnn_type="gin",
+        partial_charge=partial_charge,
+    )
     model.load_state_dict(torch.load(model_path))
     model.eval()
     embeddings = model(batch)
@@ -400,8 +599,9 @@ def evaluate_pretraining(pattern, chemicals, model_path):
     return pattern_embs, y
 
 
-def plot_embedding(X, y, title=None, mode="text"):
-    cmap = ["red", "green", "blue", "orange", "magenta", "gray"]
+def plot_embedding(X, y, title=None, mode="text", cmap=None):
+    if cmap is None:
+        cmap = ["red", "green", "blue", "orange", "magenta", "gray"]
     x_min, x_max = np.min(X, 0), np.max(X, 0)
     X = (X - x_min) / (x_max - x_min)
 

@@ -1,3 +1,7 @@
+# MACOS hidden files
+.DS_Store
+__MACOSX
+
 # output files
 trained_models/
 runs/
@@ -6,6 +10,8 @@ runs/
 *.pt
 dataset/chembl/*
 dataset/*/processed
+dataset/*/processed.old
+resources/eval/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
