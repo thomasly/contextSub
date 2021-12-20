@@ -29,15 +29,12 @@ class MoleculeDataset(InMemoryDataset):
         pre_transform=None,
         pre_filter=None,
         dataset="zinc250k",
-<<<<<<< HEAD
-=======
         partial_charge=False,
         substruct_input=False,
         pattern_path=None,
         context=False,
         hops=5,
         pooling_indicator=False,
->>>>>>> dev
     ):
         """
         The main Dataset class for the project.
