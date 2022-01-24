@@ -289,7 +289,10 @@ def random_split(
 
     train_dataset = dataset[torch.tensor(train_idx)]
     valid_dataset = dataset[torch.tensor(valid_idx)]
-    test_dataset = dataset[torch.tensor(test_idx)]
+    if frac_test > 0:
+        test_dataset = dataset[torch.tensor(test_idx)]
+    else:
+        test_dataset = None
 
     if not smiles_list:
         return train_dataset, valid_dataset, test_dataset

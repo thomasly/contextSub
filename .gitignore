@@ -9,8 +9,10 @@ runs/
 # processed datasets and large datasets
 *.pt
 dataset/chembl/*
+dataset/chemblfp/*
+dataset/testfp/raw/smiles.txt
 dataset/*/processed
-dataset/*/processed.old
+dataset/*/processed.old*
 resources/eval/
 
 # Byte-compiled / optimized / DLL files
@@ -142,3 +144,4 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+

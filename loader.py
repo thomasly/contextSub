@@ -1,13 +1,13 @@
 import os
-import torch
 import pickle
 from itertools import chain
 
-import pandas as pd
-import numpy as np
 from rdkit.Chem import Descriptors
 from rdkit.Chem import AllChem
 from rdkit.Chem.rdMolDescriptors import GetMorganFingerprintAsBitVect
+import pandas as pd
+import numpy as np
+import torch
 from torch.utils import data
 from torch_geometric.data import Data
 from torch_geometric.data import InMemoryDataset
@@ -110,7 +110,7 @@ class MoleculeDataset(InMemoryDataset):
             if data is None:
                 continue
             data.id = torch.tensor([i])
-            if len(labels.shape) > 1:
+            if len(labels.shape) > 1 and labels.shape[1] > 1:
                 data.y = torch.tensor(labels[i, :])
             else:
                 data.y = torch.tensor([labels[i]])
@@ -186,6 +186,10 @@ class MoleculeDataset(InMemoryDataset):
             self.load_zinc_standard_dataset(data_list, data_smiles_list)
         elif self.dataset == "chembl":
             self.load_chembl_dataset(data_list, data_smiles_list)
+        elif self.dataset == "chemblfp":
+            self.load_dataset(data_list, data_smiles_list, method=_load_chemblfp_ds)
+        elif self.dataset == "testfp":
+            self.load_dataset(data_list, data_smiles_list, method=_load_testfp_ds)
         elif self.dataset == "tox21":
             self.load_dataset(data_list, data_smiles_list, method=_load_tox21_dataset)
         elif self.dataset == "hiv":
@@ -807,6 +811,33 @@ def _load_chembl_with_labels_dataset(root_path):
     assert len(preprocessed_rdkitArr) == len(smiles_list)
 
     return smiles_list, preprocessed_rdkitArr, folds, denseOutputData
+
+
+def _load_chemblfp_ds(input_path):
+    """
+    :param input_path:
+    :return: list of smiles, list of rdkit mol obj, np.array containing the
+    labels
+    """
+    smiles_list = []
+    with open(input_path, "r") as f:
+        for line in f:
+            smiles_list.append(line.strip())
+
+    rdkit_mol_objs_list = [AllChem.MolFromSmiles(sm) for sm in smiles_list]
+    labels = []
+    for mol in rdkit_mol_objs_list:
+        fp = create_circular_fingerprint(mol, 4, 2048, True)
+        labels.append(fp)
+    labels = np.stack(labels)
+    labels = np.where(labels == 0, -1, labels)
+    assert len(rdkit_mol_objs_list) == len(smiles_list)
+
+    return smiles_list, rdkit_mol_objs_list, labels
+
+
+def _load_testfp_ds(input_path):
+    return _load_chemblfp_ds(input_path)
 
 
 def create_all_datasets():
